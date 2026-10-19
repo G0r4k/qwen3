@@ -1,16 +1,21 @@
 import { create } from 'zustand';
 import { FileNode, ChatMessage, OllamaConfig, TerminalLine, PanelView } from './types';
+import { ExecutionPlan, PlanStep } from './types/plan';
 
 interface AppState {
   // Files
   files: FileNode[];
   activeFileId: string | null;
   openFileIds: string[];
+  workspaceName: string;
   
   // Chat
   messages: ChatMessage[];
   isGenerating: boolean;
-  currentPhase: 'idle' | 'planning' | 'executing';
+  currentPhase: 'idle' | 'planning' | 'executing' | 'verifying';
+  
+  // Execution Plan
+  currentPlan: ExecutionPlan | null;
   
   // Terminal
   terminalLines: TerminalLine[];
@@ -34,8 +39,17 @@ interface AppState {
   
   addMessage: (msg: ChatMessage) => void;
   setGenerating: (v: boolean) => void;
-  setCurrentPhase: (p: 'idle' | 'planning' | 'executing') => void;
+  setCurrentPhase: (p: 'idle' | 'planning' | 'executing' | 'verifying') => void;
   clearMessages: () => void;
+  
+  // Plan actions
+  setCurrentPlan: (plan: ExecutionPlan | null) => void;
+  updatePlanStep: (stepId: string, updates: Partial<PlanStep>) => void;
+  updatePlanStatus: (status: ExecutionPlan['status']) => void;
+  
+  // Workspace actions
+  setWorkspaceName: (name: string) => void;
+  setWorkspaceFiles: (files: FileNode[]) => void;
   
   addTerminalLine: (line: TerminalLine) => void;
   clearTerminal: () => void;
@@ -156,10 +170,12 @@ export const useStore = create<AppState>((set, get) => ({
   files: defaultFiles,
   activeFileId: 'main.ts',
   openFileIds: ['main.ts'],
+  workspaceName: 'my-project',
   
   messages: [],
   isGenerating: false,
   currentPhase: 'idle',
+  currentPlan: null,
   
   terminalLines: [
     { id: '1', content: '$ Welcome to LocalCoder Terminal', type: 'info', timestamp: new Date() },
@@ -242,6 +258,30 @@ export const useStore = create<AppState>((set, get) => ({
   setGenerating: (v) => set({ isGenerating: v }),
   setCurrentPhase: (p) => set({ currentPhase: p }),
   clearMessages: () => set({ messages: [] }),
+  
+  // Plan actions
+  setCurrentPlan: (plan) => set({ currentPlan: plan }),
+  updatePlanStep: (stepId, updates) => {
+    const plan = get().currentPlan;
+    if (!plan) return;
+    set({
+      currentPlan: {
+        ...plan,
+        steps: plan.steps.map(step =>
+          step.id === stepId ? { ...step, ...updates } : step
+        )
+      }
+    });
+  },
+  updatePlanStatus: (status) => {
+    const plan = get().currentPlan;
+    if (!plan) return;
+    set({ currentPlan: { ...plan, status } });
+  },
+  
+  // Workspace actions
+  setWorkspaceName: (name) => set({ workspaceName: name }),
+  setWorkspaceFiles: (files) => set({ files }),
   
   addTerminalLine: (line) => set({ terminalLines: [...get().terminalLines, line] }),
   clearTerminal: () => set({ terminalLines: [] }),

@@ -6,20 +6,23 @@ import Chat from './components/Chat';
 import Terminal from './components/Terminal';
 import Settings from './components/Settings';
 import OllamaStatus from './components/OllamaStatus';
+import ExecutionPlanView from './components/ExecutionPlanView';
+import WorkspaceSelector from './components/WorkspaceSelector';
 import { 
   MessageSquare, FolderOpen, TerminalSquare, Settings as SettingsIcon,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
-  Bot, ChevronDown
+  Bot, ChevronDown, ListChecks
 } from 'lucide-react';
 
 type BottomPanel = 'terminal' | 'output' | 'problems';
 
 export default function App() {
-  const { showSettings, setShowSettings, activePanel, setActivePanel } = useStore();
+  const { showSettings, setShowSettings, activePanel, setActivePanel, currentPlan } = useStore();
   const [showSidebar, setShowSidebar] = useState(true);
   const [showChat, setShowChat] = useState(true);
   const [bottomPanel, setBottomPanel] = useState<BottomPanel | null>(null);
   const [showBottomPanel, setShowBottomPanel] = useState(false);
+  const [showPlanPanel, setShowPlanPanel] = useState(false);
 
   return (
     <div className="h-screen w-screen flex flex-col overflow-hidden bg-[#1e1e1e] text-[#cccccc]">
@@ -72,6 +75,13 @@ export default function App() {
           >
             <TerminalSquare size={20} />
           </button>
+          <button
+            onClick={() => setShowPlanPanel(!showPlanPanel)}
+            className={`p-2 rounded-lg transition-colors ${showPlanPanel ? 'text-white bg-[#505050]' : 'text-[#888] hover:text-white hover:bg-[#3c3c3c]'}`}
+            title="Execution Plan"
+          >
+            <ListChecks size={20} />
+          </button>
           
           <div className="flex-1" />
           
@@ -111,6 +121,13 @@ export default function App() {
             </div>
           )}
         </div>
+
+        {/* Execution Plan Panel */}
+        {showPlanPanel && (
+          <div className="w-[320px] shrink-0 border-l border-[#1e1e1e] overflow-hidden">
+            <ExecutionPlanView />
+          </div>
+        )}
 
         {/* Chat Panel */}
         {showChat && !showSettings && (

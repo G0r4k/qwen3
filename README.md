@@ -1,26 +1,66 @@
 # LocalCoder - IDE con IA Local
 
-Un entorno de desarrollo integrado (IDE) clon de Qwen Coder diseñado para funcionar con modelos de IA locales a través de Ollama. Utiliza una arquitectura dual-modelo donde un modelo "Director" analiza las solicitudes y crea planes de implementación, mientras que un modelo "Executor" genera el código basado en esos planes.
+Un entorno de desarrollo integrado (IDE) avanzado que utiliza una arquitectura **Director-Developer con verificación por pasos** para implementar código de alta calidad usando modelos de IA locales a través de Ollama.
+
+## 🎯 Arquitectura Avanzada
+
+LocalCoder implementa un flujo de trabajo profesional:
+
+1. **🧠 Director AI**: Analiza tu solicitud y crea un plan detallado paso a paso
+2. **👨‍💻 Developer AI**: Ejecuta cada paso usando herramientas reales para modificar el workspace
+3. **🔍 Verificación**: El Director verifica que cada paso se completó correctamente
+4. **✅ Resultado**: Código implementado y verificado automáticamente
+
+```
+Usuario → Director (Planifica) → Developer (Ejecuta con herramientas) → Director (Verifica) → ✓
+```
 
 ## 🚀 Características
 
+- **Arquitectura Director-Developer** con verificación por pasos
+- **Herramientas reales** para el Developer (leer, escribir, buscar, eliminar archivos)
+- **Workspace configurable** - Carga tu proyecto existente
 - **Editor de código profesional** con Monaco Editor (el mismo motor que VS Code)
-- **Arquitectura dual-modelo** con Director y Executor
-- **Chat con IA en tiempo real** con streaming de respuestas
+- **Panel de Plan de Ejecución** en tiempo real
+- **Chat con IA** con streaming de respuestas
 - **Explorador de archivos** interactivo
-- **Terminal integrada** con comandos personalizados
+- **Terminal integrada** con logs detallados
 - **Configuración flexible** de modelos y parámetros
 - **100% local** - Todos los datos permanecen en tu máquina
 - **Interfaz moderna** inspirada en VS Code
 
-## 🏗️ Arquitectura
+## 🏗️ Arquitectura Detallada
 
-El sistema utiliza dos instancias de modelos locales (por defecto `qwen2.5-coder:3b`):
+### Director AI (qwen2.5-coder:3b)
+- **Rol**: Arquitecto de software senior
+- **Responsabilidades**:
+  - Analizar solicitudes del usuario
+  - Crear planes de implementación detallados
+  - Verificar el trabajo del Developer después de cada paso
+  - Aprobar o solicitar correcciones
+- **Modelo**: Configurable en Settings
 
-1. **Director Model**: Analiza la solicitud del usuario, examina el contexto del código existente y genera un plan detallado de implementación
-2. **Executor Model**: Recibe el plan del Director y genera el código real siguiendo las instrucciones
+### Developer AI (qwen2.5-coder:3b)
+- **Rol**: Programador experto
+- **Responsabilidades**:
+  - Ejecutar pasos del plan uno por uno
+  - Usar herramientas para interactuar con el workspace
+  - Reportar resultados de cada acción
+- **Herramientas disponibles**:
+  - `read_file`: Leer archivos del workspace
+  - `write_file`: Crear o modificar archivos
+  - `list_files`: Listar estructura del proyecto
+  - `search_code`: Buscar patrones en el código
+  - `delete_file`: Eliminar archivos
 
-Este enfoque mejora la calidad del código generado al separar la planificación de la ejecución.
+### Sistema de Verificación
+Después de cada paso, el Director:
+1. Revisa los cambios realizados por el Developer
+2. Verifica que se cumplieron los requisitos del paso
+3. Proporciona feedback detallado
+4. Aprueba o solicita correcciones
+
+Ver [ARCHITECTURE.md](./ARCHITECTURE.md) para más detalles.
 
 ## 📋 Requisitos Previos
 

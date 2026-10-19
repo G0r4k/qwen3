@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 import { useOllama } from '../hooks/useOllama';
 import { v4 as uuidv4 } from 'uuid';
-import { Send, Bot, User, Loader2, Sparkles, Cpu, Trash2, Zap } from 'lucide-react';
+import { Send, Bot, User, Loader2, Sparkles, Cpu, Trash2, Zap, CheckCircle } from 'lucide-react';
 
 function PhaseIndicator({ phase }: { phase: 'planning' | 'executing' }) {
   return (
@@ -71,9 +71,10 @@ export default function Chat() {
       timestamp: new Date(),
     };
     addMessage(userMsg);
+    const userInput = input.trim();
     setInput('');
 
-    await runDualModelPipeline(userMsg.content);
+    await runDualModelPipeline(userInput);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

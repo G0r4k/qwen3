@@ -1,9 +1,23 @@
 import { useStore } from '../store';
 import { ChatMessage } from '../types';
+import { ExecutionPlan, PlanStep, ToolCall } from '../types/plan';
+import { executeTool, getToolDefinitions, ToolContext } from '../tools';
 import { v4 as uuidv4 } from 'uuid';
 
 export function useOllama() {
-  const { ollamaConfig, addMessage, setGenerating, setCurrentPhase, addTerminalLine } = useStore();
+  const { 
+    ollamaConfig, 
+    addMessage, 
+    setGenerating, 
+    setCurrentPhase, 
+    addTerminalLine,
+    files,
+    workspaceName,
+    setCurrentPlan,
+    updatePlanStep,
+    updatePlanStatus,
+    setWorkspaceFiles
+  } = useStore();
 
   const streamChat = async (
     messages: { role: string; content: string }[],
@@ -32,7 +46,7 @@ export function useOllama() {
       throw new Error('No response body from Ollama');
     }
 
-    const reader = response.body?.getReader();
+    const reader = response.body.getReader();
     if (!reader) throw new Error('No response body');
 
     const decoder = new TextDecoder();
@@ -61,155 +75,354 @@ export function useOllama() {
     return fullContent;
   };
 
-  const generateWithDirector = async (userPrompt: string, fileContext: string): Promise<string> => {
-    const systemPrompt = `You are a senior software architect and code director. Your job is to analyze the user's request and create a detailed implementation plan. 
+  const generatePlan = async (userRequest: string): Promise<ExecutionPlan> => {
+    const fileContext = getFileContext();
+    const toolDefs = getToolDefinitions();
 
-Given the current codebase context and the user's request, provide:
-1. A brief analysis of what needs to be done
-2. A step-by-step plan for implementation
-3. Specific instructions for the executor model about what code to write
+    const systemPrompt = `You are the DIRECTOR AI - a senior software architect. Your job is to analyze user requests and create a detailed step-by-step implementation plan.
 
-Be concise but precise. Focus on actionable steps.
+IMPORTANT: You do NOT write code yourself. You create a plan that will be executed by the DEVELOPER AI.
 
-Current files context:
-${fileContext}`;
+For each step, provide:
+1. A clear title
+2. A detailed description of what needs to be done
+3. Specific files to create/modify
+4. Expected outcome
 
-    const messages = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ];
+Available tools for the Developer:
+${toolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
 
-    const assistantId = uuidv4();
-    const assistantMsg: ChatMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-      model: ollamaConfig.directorModel,
-      phase: 'planning',
-    };
-    addMessage(assistantMsg);
+Current workspace structure:
+${fileContext}
 
-    const result = await streamChat(messages, ollamaConfig.directorModel, (chunk) => {
-      // Update the last message content incrementally
-      useStore.setState(state => ({
-        messages: state.messages.map(m => 
-          m.id === assistantId ? { ...m, content: m.content + chunk } : m
-        ),
-      }));
-    });
+Respond in this EXACT JSON format:
+{
+  "goal": "Brief description of the overall goal",
+  "steps": [
+    {
+      "id": "step-1",
+      "title": "Step title",
+      "description": "Detailed description of what to do"
+    }
+  ]
+}
 
-    return result;
-  };
-
-  const generateWithExecutor = async (plan: string, userPrompt: string, fileContext: string): Promise<string> => {
-    const systemPrompt = `You are an expert code executor. You receive implementation plans and turn them into actual code.
-
-Based on the plan provided, generate the actual code implementation. Rules:
-- Write clean, well-structured code
-- Include necessary imports
-- Add brief comments for complex logic
-- Use the exact file paths mentioned in the plan
-- Format code blocks with file paths like: \`\`\`filepath:src/file.ts
-
-Current files context:
-${fileContext}`;
+Be specific and actionable. Each step should be completable by the Developer using the available tools.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `User request: ${userPrompt}\n\nImplementation plan:\n${plan}` },
+      { role: 'user', content: userRequest }
     ];
 
-    const assistantId = uuidv4();
-    const assistantMsg: ChatMessage = {
-      id: assistantId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date(),
-      model: ollamaConfig.executorModel,
-      phase: 'executing',
-    };
-    addMessage(assistantMsg);
+    const response = await streamChat(messages, ollamaConfig.directorModel);
+    
+    // Parse the JSON response
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON found in response');
+      
+      const parsed = JSON.parse(jsonMatch[0]);
+      
+      const plan: ExecutionPlan = {
+        id: uuidv4(),
+        goal: parsed.goal || userRequest,
+        steps: (parsed.steps || []).map((step: any, idx: number) => ({
+          id: step.id || `step-${idx + 1}`,
+          title: step.title || `Step ${idx + 1}`,
+          description: step.description || '',
+          status: 'pending' as const
+        })),
+        status: 'planning',
+        createdAt: new Date()
+      };
 
-    const result = await streamChat(messages, ollamaConfig.executorModel, (chunk) => {
-      useStore.setState(state => ({
-        messages: state.messages.map(m => 
-          m.id === assistantId ? { ...m, content: m.content + chunk } : m
-        ),
-      }));
-    });
-
-    return result;
+      return plan;
+    } catch (error) {
+      throw new Error(`Failed to parse plan from Director: ${error}`);
+    }
   };
 
-  const runDualModelPipeline = async (userPrompt: string) => {
+  const executeStep = async (step: PlanStep, plan: ExecutionPlan): Promise<PlanStep> => {
+    const fileContext = getFileContext();
+    const toolDefs = getToolDefinitions();
+
+    const systemPrompt = `You are the DEVELOPER AI - an expert programmer. You execute implementation steps using the available tools.
+
+You MUST use the tools to make changes to the workspace. Do NOT just describe what to do - actually DO it using the tools.
+
+Available tools:
+${toolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+
+To use a tool, respond with JSON in this format:
+{
+  "tool": "tool_name",
+  "parameters": { ... }
+}
+
+You can use multiple tools in sequence. After each tool use, you'll see the result and can continue.
+
+When you're done with the step, respond with:
+{
+  "done": true,
+  "summary": "Brief summary of what was accomplished"
+}
+
+Current workspace:
+${fileContext}
+
+Your task:
+${step.description}`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `Execute step: ${step.title}` }
+    ];
+
+    const toolCalls: ToolCall[] = [];
+    let summary = '';
+    let maxIterations = 10; // Prevent infinite loops
+
+    while (maxIterations > 0) {
+      const response = await streamChat(messages, ollamaConfig.executorModel);
+      
+      // Try to parse tool call
+      try {
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          
+          // Check if done
+          if (parsed.done) {
+            summary = parsed.summary || 'Step completed';
+            break;
+          }
+          
+          // Execute tool
+          if (parsed.tool) {
+            const toolContext: ToolContext = {
+              files: useStore.getState().files,
+              workspaceName: useStore.getState().workspaceName,
+              updateFiles: (newFiles) => setWorkspaceFiles(newFiles),
+              addTerminalLine: (line) => {
+                addTerminalLine({
+                  id: uuidv4(),
+                  content: line.content,
+                  type: line.type,
+                  timestamp: new Date()
+                });
+              }
+            };
+
+            const result = await executeTool(parsed.tool, parsed.parameters || {}, toolContext);
+            
+            toolCalls.push({
+              tool: parsed.tool,
+              parameters: parsed.parameters,
+              result: result.output,
+              success: result.success
+            });
+
+            // Add tool result to messages
+            messages.push({
+              role: 'assistant',
+              content: response
+            });
+            messages.push({
+              role: 'user',
+              content: result.success 
+                ? `Tool executed successfully:\n${result.output}\n\nContinue with the next action or mark as done.`
+                : `Tool failed: ${result.error}\n\nTry again or use a different approach.`
+            });
+
+            continue;
+          }
+        }
+      } catch (error) {
+        // Not JSON, treat as summary
+        summary = response;
+        break;
+      }
+
+      maxIterations--;
+    }
+
+    return {
+      ...step,
+      status: 'completed',
+      developerResponse: summary,
+      toolsUsed: toolCalls
+    };
+  };
+
+  const verifyStep = async (step: PlanStep, plan: ExecutionPlan): Promise<{ passed: boolean; feedback: string }> => {
+    const fileContext = getFileContext();
+
+    const systemPrompt = `You are the DIRECTOR AI verifying the work of the DEVELOPER AI.
+
+Review the step that was just completed and verify it was done correctly.
+
+Original step:
+Title: ${step.title}
+Description: ${step.description}
+
+Developer's summary:
+${step.developerResponse || 'No summary provided'}
+
+Tools used:
+${step.toolsUsed?.map(t => `- ${t.tool}: ${t.success ? '✓' : '✗'} ${JSON.stringify(t.parameters)}`).join('\n') || 'None'}
+
+Current workspace state:
+${fileContext}
+
+Respond in this EXACT JSON format:
+{
+  "passed": true/false,
+  "feedback": "Detailed feedback on what was done well and what needs improvement"
+}
+
+Be thorough but fair. If the step was completed correctly, mark it as passed.`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: 'Verify the completed step' }
+    ];
+
+    const response = await streamChat(messages, ollamaConfig.directorModel);
+
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) throw new Error('No JSON found');
+      
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        passed: parsed.passed || false,
+        feedback: parsed.feedback || 'No feedback provided'
+      };
+    } catch (error) {
+      return {
+        passed: false,
+        feedback: `Failed to parse verification: ${error}`
+      };
+    }
+  };
+
+  const runDualModelPipeline = async (userRequest: string) => {
     setGenerating(true);
     setCurrentPhase('planning');
 
     addTerminalLine({
       id: uuidv4(),
-      content: `[Director] Analyzing request with ${ollamaConfig.directorModel}...`,
+      content: `[Director] Analyzing request...`,
       type: 'info',
-      timestamp: new Date(),
+      timestamp: new Date()
     });
 
-    // Get file context
-    const fileContext = getFileContext();
-
     try {
-      // Phase 1: Director analyzes and plans
-      const plan = await generateWithDirector(userPrompt, fileContext);
+      // Phase 1: Generate plan
+      const plan = await generatePlan(userRequest);
+      setCurrentPlan(plan);
+
+      addMessage({
+        id: uuidv4(),
+        role: 'assistant',
+        content: `## 📋 Implementation Plan\n\n**Goal:** ${plan.goal}\n\n**Steps:**\n${plan.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}`,
+        timestamp: new Date(),
+        model: ollamaConfig.directorModel,
+        phase: 'planning'
+      });
 
       addTerminalLine({
         id: uuidv4(),
-        content: `[Director] Plan generated. Passing to executor...`,
+        content: `[Director] Plan created with ${plan.steps.length} steps`,
         type: 'info',
-        timestamp: new Date(),
+        timestamp: new Date()
       });
 
-      // Phase 2: Executor implements
+      // Phase 2: Execute each step
       setCurrentPhase('executing');
-      
+      updatePlanStatus('executing');
+
+      for (let i = 0; i < plan.steps.length; i++) {
+        const step = plan.steps[i];
+        
+        addTerminalLine({
+          id: uuidv4(),
+          content: `\n[Step ${i + 1}/${plan.steps.length}] ${step.title}`,
+          type: 'info',
+          timestamp: new Date()
+        });
+
+        // Update step status
+        updatePlanStep(step.id, { status: 'in_progress' });
+
+        // Execute step
+        const completedStep = await executeStep(step, plan);
+        updatePlanStep(step.id, completedStep);
+
+        addTerminalLine({
+          id: uuidv4(),
+          content: `[Developer] ${completedStep.developerResponse}`,
+          type: 'output',
+          timestamp: new Date()
+        });
+
+        // Phase 3: Verify step
+        setCurrentPhase('verifying');
+        addTerminalLine({
+          id: uuidv4(),
+          content: `[Director] Verifying step ${i + 1}...`,
+          type: 'info',
+          timestamp: new Date()
+        });
+
+        const verification = await verifyStep(completedStep, plan);
+        updatePlanStep(step.id, { 
+          verificationResult: verification,
+          status: verification.passed ? 'verified' : 'failed'
+        });
+
+        addTerminalLine({
+          id: uuidv4(),
+          content: `[Director] ${verification.passed ? '✓ Verified' : '✗ Failed'}: ${verification.feedback}`,
+          type: verification.passed ? 'info' : 'error',
+          timestamp: new Date()
+        });
+
+        setCurrentPhase('executing');
+      }
+
+      // All steps completed
+      updatePlanStatus('completed');
       addTerminalLine({
         id: uuidv4(),
-        content: `[Executor] Implementing with ${ollamaConfig.executorModel}...`,
+        content: `\n✓ All steps completed successfully!`,
         type: 'info',
-        timestamp: new Date(),
+        timestamp: new Date()
       });
 
-      await generateWithExecutor(plan, userPrompt, fileContext);
-
-      addTerminalLine({
+      addMessage({
         id: uuidv4(),
-        content: `[Executor] Implementation complete.`,
-        type: 'info',
+        role: 'assistant',
+        content: `## ✅ Implementation Complete\n\nAll ${plan.steps.length} steps have been executed and verified.\n\n${plan.steps.map((s, i) => `${i + 1}. ${s.title} - ${s.verificationResult?.passed ? '✓' : '✗'}`).join('\n')}`,
         timestamp: new Date(),
+        model: ollamaConfig.directorModel,
+        phase: 'executing'
       });
 
     } catch (error: any) {
-      const isCorsError = error.message?.includes('Failed to fetch') || 
-                          error.name === 'TypeError' ||
-                          error.message?.includes('CORS') ||
-                          error.message?.includes('NetworkError');
-      
-      const errorMessage = isCorsError 
-        ? `Error de CORS: El navegador bloqueó la conexión a Ollama.\n\nSOLUCIÓN:\n1. Detén Ollama (Ctrl+C en la terminal)\n2. Reinicia con CORS habilitado:\n   OLLAMA_ORIGINS="*" ollama serve\n\nO configura la variable de entorno OLLAMA_ORIGINS permanentemente en tu sistema.`
-        : error.message;
-      
+      updatePlanStatus('failed');
       addTerminalLine({
         id: uuidv4(),
-        content: `[Error] ${errorMessage}`,
+        content: `[Error] ${error.message}`,
         type: 'error',
-        timestamp: new Date(),
+        timestamp: new Date()
       });
       
       addMessage({
         id: uuidv4(),
         role: 'assistant',
-        content: isCorsError
-          ? `⚠️ **Error de CORS detectado**\n\nEl navegador está bloqueando la conexión a Ollama por políticas de seguridad.\n\n**Para solucionarlo:**\n\n1. Detén Ollama (Ctrl+C)\n2. Reinicia con:\n\`\`\`\nOLLAMA_ORIGINS="*" ollama serve\n\`\`\`\n\nO configura permanentemente:\n- **macOS/Linux**: Añade \`export OLLAMA_ORIGINS="*"\` a tu \`.bashrc\` o \`.zshrc\`\n- **Windows**: Añade la variable de entorno OLLAMA_ORIGINS con valor * en las variables del sistema\n\nLuego reinicia la aplicación.`
-          : `Error: ${errorMessage}\n\nMake sure Ollama is running at ${ollamaConfig.baseUrl} and the model "${ollamaConfig.directorModel}" is installed.`,
-        timestamp: new Date(),
+        content: `Error: ${error.message}`,
+        timestamp: new Date()
       });
     } finally {
       setGenerating(false);
@@ -221,12 +434,13 @@ ${fileContext}`;
     const { files } = useStore.getState();
     const context: string[] = [];
 
-    const traverse = (nodes: typeof files) => {
+    const traverse = (nodes: typeof files, path: string = '') => {
       for (const node of nodes) {
+        const fullPath = path ? `${path}/${node.name}` : node.name;
         if (node.type === 'file' && node.content) {
-          context.push(`--- ${node.name} ---\n${node.content}\n`);
+          context.push(`--- ${fullPath} ---\n${node.content}\n`);
         }
-        if (node.children) traverse(node.children);
+        if (node.children) traverse(node.children, fullPath);
       }
     };
 
@@ -235,67 +449,14 @@ ${fileContext}`;
   };
 
   const checkConnection = async (): Promise<{ connected: boolean; error?: string }> => {
-    const baseUrl = ollamaConfig.baseUrl;
-    
-    // Intento 1: Verificar que el servidor responde
     try {
-      const rootRes = await fetch(baseUrl, { 
-        method: 'GET',
-        mode: 'cors',
-        cache: 'no-cache'
-      });
-      
-      if (!rootRes.ok) {
-        return { 
-          connected: false, 
-          error: `Ollama responded with HTTP ${rootRes.status}. The server is running but may not be configured correctly.`
-        };
-      }
-    } catch (error: any) {
-      // Error de red o CORS
-      const errorMsg = error.message || error.toString();
-      
-      if (errorMsg.includes('Failed to fetch') || 
-          errorMsg.includes('NetworkError') ||
-          errorMsg.includes('CORS') ||
-          error.name === 'TypeError') {
-        
-        // Verificar si es CORS o si Ollama no está corriendo
-        try {
-          // Intentar con no-cors para ver si el servidor existe
-          await fetch(baseUrl, { mode: 'no-cors' });
-          // Si llega aquí, el servidor existe pero CORS está bloqueando
-          return { 
-            connected: false, 
-            error: 'CORS Error: Ollama is running but blocking browser requests. Set OLLAMA_ORIGINS="*" environment variable and restart Ollama.'
-          };
-        } catch {
-          // El servidor no responde en absoluto
-          return { 
-            connected: false, 
-            error: `Cannot reach Ollama at ${baseUrl}. Make sure Ollama is running with: ollama serve`
-          };
-        }
-      }
-      
-      return { connected: false, error: errorMsg };
-    }
-    
-    // Intento 2: Verificar el endpoint de modelos
-    try {
-      const res = await fetch(`${baseUrl}/api/tags`, {
-        method: 'GET',
-        mode: 'cors',
-        cache: 'no-cache'
-      });
-      
+      const res = await fetch(`${ollamaConfig.baseUrl}/api/tags`);
       if (res.ok) {
         return { connected: true };
       }
-      
-      return { connected: false, error: `API endpoint returned HTTP ${res.status}` };
+      return { connected: false, error: `HTTP ${res.status}` };
     } catch (error: any) {
-      return { connected: false, error: error.message || 'Failed to query models' };
+      return { connected: false, error: error.message };
     }
   };
 
@@ -315,6 +476,6 @@ ${fileContext}`;
     streamChat,
     checkConnection,
     listModels,
-    getFileContext,
+    getFileContext
   };
 }

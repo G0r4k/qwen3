@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { useOllama } from '../hooks/useOllama';
 import ConnectionDiagnostic from './ConnectionDiagnostic';
+import WorkspaceSelector from './WorkspaceSelector';
 import { Settings as SettingsIcon, Check, X, RefreshCw, Server, Cpu, Zap, Thermometer, Stethoscope } from 'lucide-react';
 
 export default function Settings() {
@@ -47,6 +48,9 @@ export default function Settings() {
       </div>
 
       <div className="p-4 space-y-6">
+        {/* Workspace Selector */}
+        <WorkspaceSelector />
+
         {/* Connection Status */}
         <div className="bg-[#252526] rounded-lg p-4 border border-[#333]">
           <div className="flex items-center justify-between mb-3">
