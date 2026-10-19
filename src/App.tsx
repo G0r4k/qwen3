@@ -5,10 +5,11 @@ import CodeEditor from './components/Editor';
 import Chat from './components/Chat';
 import Terminal from './components/Terminal';
 import Settings from './components/Settings';
+import { exportProjectAsZip } from './utils/exportZip';
 import { 
   MessageSquare, FolderOpen, TerminalSquare, Settings as SettingsIcon,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
-  Bot, ChevronDown
+  Bot, ChevronDown, Download
 } from 'lucide-react';
 
 type BottomPanel = 'terminal' | 'output' | 'problems';
@@ -39,6 +40,17 @@ export default function App() {
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
             <span className="text-[10px] text-[#888]">Ollama</span>
           </div>
+          <button
+            onClick={() => {
+              const { files } = useStore.getState();
+              exportProjectAsZip(files, 'localcoder-project');
+            }}
+            className="p-1.5 rounded text-[#888] hover:text-white hover:bg-[#3c3c3c] flex items-center gap-1"
+            title="Download project as ZIP"
+          >
+            <Download size={14} />
+            <span className="text-[10px]">ZIP</span>
+          </button>
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`p-1.5 rounded text-[#888] hover:text-white hover:bg-[#3c3c3c] ${showSettings ? 'bg-[#3c3c3c] text-white' : ''}`}

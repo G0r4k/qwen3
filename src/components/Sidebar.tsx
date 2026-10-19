@@ -1,9 +1,10 @@
 import React from 'react';
 import { useStore } from '../store';
 import { FileNode } from '../types';
+import { exportProjectAsZip } from '../utils/exportZip';
 import { 
   ChevronRight, ChevronDown, Folder, FolderOpen, File, 
-  FileCode, FileJson, FileText, Plus, RefreshCw 
+  FileCode, FileJson, FileText, Plus, RefreshCw, Download
 } from 'lucide-react';
 
 function getFileIcon(name: string) {
@@ -85,6 +86,16 @@ export default function Sidebar() {
           </button>
           <button className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" title="Refresh">
             <RefreshCw size={14} />
+          </button>
+          <button 
+            onClick={() => {
+              const { files } = useStore.getState();
+              exportProjectAsZip(files, 'my-project');
+            }}
+            className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" 
+            title="Download as ZIP"
+          >
+            <Download size={14} />
           </button>
         </div>
       </div>
