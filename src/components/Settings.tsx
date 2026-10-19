@@ -11,11 +11,17 @@ export default function Settings() {
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+
   const checkStatus = async () => {
     setLoading(true);
-    const connected = await checkConnection();
-    setIsConnected(connected);
-    if (connected) {
+    setConnectionError(null);
+    const result = await checkConnection();
+    setIsConnected(result.connected);
+    if (result.error) {
+      setConnectionError(result.error);
+    }
+    if (result.connected) {
       const models = await listModels();
       setAvailableModels(models);
     }
@@ -71,6 +77,24 @@ export default function Settings() {
                 </span>
               )}
             </div>
+            
+            {connectionError && (
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-[11px] text-red-300">
+                <p className="font-medium mb-1">⚠️ Error de conexión:</p>
+                <p className="text-[10px]">{connectionError}</p>
+                {connectionError.includes('CORS') && (
+                  <div className="mt-2 p-2 bg-[#1e1e1e] rounded text-[10px] text-[#ccc]">
+                    <p className="font-medium mb-1">Solución:</p>
+                    <p>1. Detén Ollama (Ctrl+C)</p>
+                    <p>2. Ejecuta con CORS habilitado:</p>
+                    <code className="block mt-1 p-1 bg-[#333] rounded text-green-300">
+                      OLLAMA_ORIGINS="*" ollama serve
+                    </code>
+                    <p className="mt-1 text-[9px] text-[#888]">O configura la variable de entorno permanentemente en tu sistema</p>
+                  </div>
+                )}
+              </div>
+            )}
             
             {availableModels.length > 0 && (
               <div className="text-[11px] text-[#888]">

@@ -41,11 +41,33 @@ curl -fsSL https://ollama.ai/install.sh | sh
 # Descarga desde https://ollama.ai/download
 ```
 
-**Iniciar Ollama:**
+**⚠️ IMPORTANTE: Configurar CORS para la aplicación web**
+
+Por defecto, Ollama no permite peticiones desde navegadores web. Debes configurar la variable de entorno `OLLAMA_ORIGINS` antes de iniciar Ollama:
+
+**Opción 1: Ejecutar con CORS habilitado (temporal)**
 
 ```bash
-ollama serve
+OLLAMA_ORIGINS="*" ollama serve
 ```
+
+**Opción 2: Configurar permanentemente**
+
+**macOS/Linux:**
+```bash
+# Añade a tu ~/.bashrc o ~/.zshrc
+export OLLAMA_ORIGINS="*"
+
+# Luego recarga la configuración
+source ~/.bashrc  # o source ~/.zshrc
+```
+
+**Windows:**
+1. Abre "Variables de entorno del sistema"
+2. Añade una nueva variable de entorno:
+   - Nombre: `OLLAMA_ORIGINS`
+   - Valor: `*`
+3. Reinicia Ollama
 
 **Descargar el modelo:**
 
@@ -250,12 +272,36 @@ npm run typecheck    # Verificar tipos TypeScript
 
 ## 🐛 Solución de Problemas
 
-### "Cannot connect to Ollama"
+### "Cannot connect to Ollama" o Error de CORS
 
-1. Verifica que Ollama esté corriendo: `ollama serve`
-2. Comprueba que el modelo esté descargado: `ollama list`
-3. Verifica la URL en Settings (por defecto: `http://localhost:11434`)
-4. Revisa el firewall si Ollama corre en otra máquina
+**Síntoma:** La aplicación muestra "Not connected" o errores de CORS.
+
+**Causa:** El navegador bloquea las peticiones a Ollama por políticas de seguridad CORS.
+
+**Solución:**
+
+1. **Detén Ollama** (Ctrl+C en la terminal donde está corriendo)
+
+2. **Reinicia con CORS habilitado:**
+   ```bash
+   OLLAMA_ORIGINS="*" ollama serve
+   ```
+
+3. **Verifica la conexión** en Settings → Check
+
+**Configuración permanente:**
+
+- **macOS/Linux**: Añade `export OLLAMA_ORIGINS="*"` a tu `~/.bashrc` o `~/.zshrc`
+- **Windows**: Añade la variable de entorno `OLLAMA_ORIGINS` con valor `*` en las variables del sistema
+
+**Verificar que Ollama está corriendo:**
+
+```bash
+# Debería mostrar los modelos instalados
+curl http://localhost:11434/api/tags
+```
+
+Si el comando anterior funciona pero la aplicación web no, es definitivamente un problema de CORS.
 
 ### El modelo no responde
 

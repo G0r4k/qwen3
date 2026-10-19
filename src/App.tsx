@@ -5,6 +5,7 @@ import CodeEditor from './components/Editor';
 import Chat from './components/Chat';
 import Terminal from './components/Terminal';
 import Settings from './components/Settings';
+import OllamaStatus from './components/OllamaStatus';
 import { 
   MessageSquare, FolderOpen, TerminalSquare, Settings as SettingsIcon,
   PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
@@ -35,10 +36,7 @@ export default function App() {
           <span className="text-[11px] text-[#888]">AI-Powered IDE with Local Models</span>
         </div>
         <div className="flex items-center gap-1">
-          <div className="flex items-center gap-1 mr-3">
-            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-[10px] text-[#888]">Ollama</span>
-          </div>
+          <OllamaStatus />
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`p-1.5 rounded text-[#888] hover:text-white hover:bg-[#3c3c3c] ${showSettings ? 'bg-[#3c3c3c] text-white' : ''}`}

@@ -28,6 +28,10 @@ export function useOllama() {
       throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
     }
 
+    if (!response.body) {
+      throw new Error('No response body from Ollama');
+    }
+
     const reader = response.body?.getReader();
     if (!reader) throw new Error('No response body');
 
@@ -183,9 +187,18 @@ ${fileContext}`;
       });
 
     } catch (error: any) {
+      const isCorsError = error.message?.includes('Failed to fetch') || 
+                          error.name === 'TypeError' ||
+                          error.message?.includes('CORS') ||
+                          error.message?.includes('NetworkError');
+      
+      const errorMessage = isCorsError 
+        ? `Error de CORS: El navegador bloqueó la conexión a Ollama.\n\nSOLUCIÓN:\n1. Detén Ollama (Ctrl+C en la terminal)\n2. Reinicia con CORS habilitado:\n   OLLAMA_ORIGINS="*" ollama serve\n\nO configura la variable de entorno OLLAMA_ORIGINS permanentemente en tu sistema.`
+        : error.message;
+      
       addTerminalLine({
         id: uuidv4(),
-        content: `[Error] ${error.message}`,
+        content: `[Error] ${errorMessage}`,
         type: 'error',
         timestamp: new Date(),
       });
@@ -193,7 +206,9 @@ ${fileContext}`;
       addMessage({
         id: uuidv4(),
         role: 'assistant',
-        content: `Error: ${error.message}. Make sure Ollama is running at ${ollamaConfig.baseUrl} and the model "${ollamaConfig.directorModel}" is installed.`,
+        content: isCorsError
+          ? `⚠️ **Error de CORS detectado**\n\nEl navegador está bloqueando la conexión a Ollama por políticas de seguridad.\n\n**Para solucionarlo:**\n\n1. Detén Ollama (Ctrl+C)\n2. Reinicia con:\n\`\`\`\nOLLAMA_ORIGINS="*" ollama serve\n\`\`\`\n\nO configura permanentemente:\n- **macOS/Linux**: Añade \`export OLLAMA_ORIGINS="*"\` a tu \`.bashrc\` o \`.zshrc\`\n- **Windows**: Añade la variable de entorno OLLAMA_ORIGINS con valor * en las variables del sistema\n\nLuego reinicia la aplicación.`
+          : `Error: ${errorMessage}\n\nMake sure Ollama is running at ${ollamaConfig.baseUrl} and the model "${ollamaConfig.directorModel}" is installed.`,
         timestamp: new Date(),
       });
     } finally {
@@ -219,12 +234,22 @@ ${fileContext}`;
     return context.join('\n');
   };
 
-  const checkConnection = async (): Promise<boolean> => {
+  const checkConnection = async (): Promise<{ connected: boolean; error?: string }> => {
     try {
       const res = await fetch(`${ollamaConfig.baseUrl}/api/tags`);
-      return res.ok;
-    } catch {
-      return false;
+      if (res.ok) {
+        return { connected: true };
+      }
+      return { connected: false, error: `HTTP ${res.status}: ${res.statusText}` };
+    } catch (error: any) {
+      // Detectar errores de CORS
+      if (error.message?.includes('Failed to fetch') || error.name === 'TypeError') {
+        return { 
+          connected: false, 
+          error: 'CORS Error: Ollama no permite peticiones desde este origen. Configura la variable de entorno OLLAMA_ORIGINS="*" y reinicia Ollama.'
+        };
+      }
+      return { connected: false, error: error.message || 'Error de conexión desconocido' };
     }
   };
 
