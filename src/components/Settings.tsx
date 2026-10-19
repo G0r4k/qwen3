@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { useOllama } from '../hooks/useOllama';
-import { Settings as SettingsIcon, Check, X, RefreshCw, Server, Cpu, Zap, Thermometer } from 'lucide-react';
+import ConnectionDiagnostic from './ConnectionDiagnostic';
+import { Settings as SettingsIcon, Check, X, RefreshCw, Server, Cpu, Zap, Thermometer, Stethoscope } from 'lucide-react';
 
 export default function Settings() {
   const { ollamaConfig, updateOllamaConfig } = useStore();
@@ -10,8 +11,8 @@ export default function Settings() {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [saved, setSaved] = useState(false);
-
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   const checkStatus = async () => {
     setLoading(true);
@@ -53,14 +54,24 @@ export default function Settings() {
               <Server size={14} className="text-[#cccccc]" />
               <span className="text-[13px] font-medium text-[#cccccc]">Ollama Connection</span>
             </div>
-            <button
-              onClick={checkStatus}
-              disabled={loading}
-              className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-[#333] hover:bg-[#444] text-[#ccc]"
-            >
-              <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
-              Check
-            </button>
+            <div className="flex gap-1">
+              <button
+                onClick={() => setShowDiagnostic(!showDiagnostic)}
+                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-[#333] hover:bg-[#444] text-[#ccc]"
+                title="Run detailed diagnostic"
+              >
+                <Stethoscope size={11} />
+                Diagnostic
+              </button>
+              <button
+                onClick={checkStatus}
+                disabled={loading}
+                className="flex items-center gap-1 text-[11px] px-2 py-1 rounded bg-[#333] hover:bg-[#444] text-[#ccc]"
+              >
+                <RefreshCw size={11} className={loading ? 'animate-spin' : ''} />
+                Check
+              </button>
+            </div>
           </div>
           
           <div className="space-y-2">
@@ -110,6 +121,15 @@ export default function Settings() {
             )}
           </div>
         </div>
+
+        {/* Connection Diagnostic */}
+        {showDiagnostic && (
+          <div className="border border-[#333] rounded-lg overflow-hidden">
+            <div className="h-[500px]">
+              <ConnectionDiagnostic />
+            </div>
+          </div>
+        )}
 
         {/* Ollama URL */}
         <div className="space-y-2">

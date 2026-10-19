@@ -235,21 +235,67 @@ ${fileContext}`;
   };
 
   const checkConnection = async (): Promise<{ connected: boolean; error?: string }> => {
+    const baseUrl = ollamaConfig.baseUrl;
+    
+    // Intento 1: Verificar que el servidor responde
     try {
-      const res = await fetch(`${ollamaConfig.baseUrl}/api/tags`);
+      const rootRes = await fetch(baseUrl, { 
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-cache'
+      });
+      
+      if (!rootRes.ok) {
+        return { 
+          connected: false, 
+          error: `Ollama responded with HTTP ${rootRes.status}. The server is running but may not be configured correctly.`
+        };
+      }
+    } catch (error: any) {
+      // Error de red o CORS
+      const errorMsg = error.message || error.toString();
+      
+      if (errorMsg.includes('Failed to fetch') || 
+          errorMsg.includes('NetworkError') ||
+          errorMsg.includes('CORS') ||
+          error.name === 'TypeError') {
+        
+        // Verificar si es CORS o si Ollama no está corriendo
+        try {
+          // Intentar con no-cors para ver si el servidor existe
+          await fetch(baseUrl, { mode: 'no-cors' });
+          // Si llega aquí, el servidor existe pero CORS está bloqueando
+          return { 
+            connected: false, 
+            error: 'CORS Error: Ollama is running but blocking browser requests. Set OLLAMA_ORIGINS="*" environment variable and restart Ollama.'
+          };
+        } catch {
+          // El servidor no responde en absoluto
+          return { 
+            connected: false, 
+            error: `Cannot reach Ollama at ${baseUrl}. Make sure Ollama is running with: ollama serve`
+          };
+        }
+      }
+      
+      return { connected: false, error: errorMsg };
+    }
+    
+    // Intento 2: Verificar el endpoint de modelos
+    try {
+      const res = await fetch(`${baseUrl}/api/tags`, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-cache'
+      });
+      
       if (res.ok) {
         return { connected: true };
       }
-      return { connected: false, error: `HTTP ${res.status}: ${res.statusText}` };
+      
+      return { connected: false, error: `API endpoint returned HTTP ${res.status}` };
     } catch (error: any) {
-      // Detectar errores de CORS
-      if (error.message?.includes('Failed to fetch') || error.name === 'TypeError') {
-        return { 
-          connected: false, 
-          error: 'CORS Error: Ollama no permite peticiones desde este origen. Configura la variable de entorno OLLAMA_ORIGINS="*" y reinicia Ollama.'
-        };
-      }
-      return { connected: false, error: error.message || 'Error de conexión desconocido' };
+      return { connected: false, error: error.message || 'Failed to query models' };
     }
   };
 
