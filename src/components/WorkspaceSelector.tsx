@@ -68,9 +68,19 @@ export default function WorkspaceSelector() {
     );
     files.push(...rootDirs);
 
+    // Determine root folder name from the uploaded path
+    const firstFile = fileList[0];
+    const firstPath: string = (firstFile as any).webkitRelativePath || firstFile.name;
+    const rootFolderName = firstPath.split('/')[0];
+    
+    // Update workspace name if it's still the default
+    if (workspaceName === 'untitled-workspace' && rootFolderName) {
+      setWorkspaceName(rootFolderName);
+    }
+    
     // Create root node if we have multiple top-level items
     if (files.length > 1) {
-      const rootName = workspaceName || 'workspace';
+      const rootName = rootFolderName || workspaceName || 'workspace';
       setWorkspaceFiles([{
         id: rootName,
         name: rootName,
@@ -79,7 +89,23 @@ export default function WorkspaceSelector() {
         children: files
       }]);
     } else if (files.length === 1) {
-      setWorkspaceFiles(files);
+      // Single top-level item - wrap it in a root if it's a folder
+      const single = files[0];
+      if (single.type === 'folder') {
+        setWorkspaceFiles([single]);
+        if (workspaceName === 'untitled-workspace') {
+          setWorkspaceName(single.name);
+        }
+      } else {
+        const rootName = workspaceName || 'workspace';
+        setWorkspaceFiles([{
+          id: rootName,
+          name: rootName,
+          type: 'folder',
+          isOpen: true,
+          children: files
+        }]);
+      }
     }
 
     // Reset input
