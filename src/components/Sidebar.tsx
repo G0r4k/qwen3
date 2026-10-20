@@ -95,9 +95,18 @@ export default function Sidebar() {
       </div>
       <div className="flex-1 overflow-y-auto py-1">
         {files.length === 0 ? (
-          <div className="px-4 py-8 text-center text-[11px] text-[#666]">
-            <p className="mb-2">Workspace vacío</p>
-            <p className="text-[10px]">Carga un proyecto desde Settings</p>
+          <div className="px-4 py-8 text-center text-[11px] text-[#888]">
+            <div className="text-3xl mb-3 opacity-50">📂</div>
+            <p className="mb-2 font-medium text-[#aaa]">No Workspace Open</p>
+            <p className="text-[10px] text-[#666] mb-3">
+              Load a project folder to start working
+            </p>
+            <button
+              onClick={() => useStore.getState().setShowSettings(true)}
+              className="px-3 py-1.5 bg-[#007acc] hover:bg-[#0098ff] text-white text-[10px] rounded transition-colors"
+            >
+              Open Settings
+            </button>
           </div>
         ) : (
           files.map(node => (

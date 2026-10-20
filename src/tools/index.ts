@@ -1,4 +1,5 @@
 import { FileNode } from '../types';
+import { useStore } from '../store';
 
 // Tool definitions for the Developer AI
 export interface Tool {
@@ -40,7 +41,14 @@ function findFileById(files: FileNode[], id: string): FileNode | null {
 
 function findFileByPath(files: FileNode[], path: string): FileNode | null {
   const parts = path.split('/').filter(p => p);
-  let current: FileNode[] = files;
+  
+  // If we have a single root folder, search inside it
+  let searchIn: FileNode[] = files;
+  if (files.length === 1 && files[0].type === 'folder' && files[0].children) {
+    searchIn = files[0].children;
+  }
+  
+  let current: FileNode[] = searchIn;
   let node: FileNode | null = null;
 
   for (const part of parts) {
@@ -75,6 +83,14 @@ function updateFileInTree(files: FileNode[], path: string, content: string): Fil
     });
   };
   
+  // If we have a single root folder, search inside it
+  if (files.length === 1 && files[0].type === 'folder' && files[0].children) {
+    return [{
+      ...files[0],
+      children: updateNode(files[0].children, 0)
+    }];
+  }
+  
   return updateNode(files, 0);
 }
 
@@ -83,9 +99,39 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
   const fileName = parts[parts.length - 1];
   const dirPath = parts.slice(0, -1);
   
+  // If workspace is empty, create a root folder first
+  let currentFiles = files;
+  if (files.length === 0) {
+    const { workspaceName } = useStore.getState();
+    const rootName = workspaceName || 'workspace';
+    currentFiles = [{
+      id: rootName,
+      name: rootName,
+      type: 'folder',
+      isOpen: true,
+      children: []
+    }];
+  }
+  
   if (dirPath.length === 0) {
-    // Create in root
-    return [...files, {
+    // Create in root - find the root folder and add to it
+    if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
+      return [{
+        ...currentFiles[0],
+        children: [
+          ...(currentFiles[0].children || []),
+          {
+            id: fileName,
+            name: fileName,
+            type: 'file',
+            content,
+            language: getLanguageFromFileName(fileName)
+          }
+        ]
+      }];
+    }
+    // No root folder, just add to root
+    return [...currentFiles, {
       id: fileName,
       name: fileName,
       type: 'file',
@@ -128,7 +174,15 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
     }
   };
   
-  return addToDir(files, 0);
+  // If we have a root folder, add to its children
+  if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
+    return [{
+      ...currentFiles[0],
+      children: addToDir(currentFiles[0].children || [], 0)
+    }];
+  }
+  
+  return addToDir(currentFiles, 0);
 }
 
 function getLanguageFromFileName(fileName: string): string {

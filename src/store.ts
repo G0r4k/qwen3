@@ -59,118 +59,14 @@ interface AppState {
   setShowSettings: (v: boolean) => void;
 }
 
-const defaultFiles: FileNode[] = [
-  {
-    id: 'root',
-    name: 'my-project',
-    type: 'folder',
-    isOpen: true,
-    children: [
-      {
-        id: 'src',
-        name: 'src',
-        type: 'folder',
-        isOpen: true,
-        children: [
-          {
-            id: 'main.ts',
-            name: 'main.ts',
-            type: 'file',
-            language: 'typescript',
-            content: `// Main application entry point
-import { App } from './app';
-
-const app = new App();
-app.start();
-
-console.log('Application started successfully!');
-`
-          },
-          {
-            id: 'app.ts',
-            name: 'app.ts',
-            type: 'file',
-            language: 'typescript',
-            content: `// Application class
-export class App {
-  private running = false;
-
-  start() {
-    this.running = true;
-    console.log('App is running');
-  }
-
-  stop() {
-    this.running = false;
-    console.log('App stopped');
-  }
-}
-`
-          },
-          {
-            id: 'utils.ts',
-            name: 'utils.ts',
-            type: 'file',
-            language: 'typescript',
-            content: `// Utility functions
-export function debounce<T extends (...args: any[]) => void>(
-  fn: T,
-  delay: number
-): T {
-  let timer: ReturnType<typeof setTimeout>;
-  return ((...args: any[]) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), delay);
-  }) as T;
-}
-
-export function formatDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
-`
-          }
-        ]
-      },
-      {
-        id: 'package.json',
-        name: 'package.json',
-        type: 'file',
-        language: 'json',
-        content: `{
-  "name": "my-project",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build"
-  }
-}
-`
-      },
-      {
-        id: 'readme.md',
-        name: 'README.md',
-        type: 'file',
-        language: 'markdown',
-        content: `# My Project
-
-A sample project to demonstrate the AI-powered code editor.
-
-## Features
-- AI-assisted coding with local models
-- Dual-model architecture (Director + Executor)
-- Real-time code generation
-`
-      }
-    ]
-  }
-];
+// Workspace vacío por defecto - el usuario debe cargar su proyecto
+const defaultFiles: FileNode[] = [];
 
 export const useStore = create<AppState>((set, get) => ({
   files: defaultFiles,
-  activeFileId: 'main.ts',
-  openFileIds: ['main.ts'],
-  workspaceName: 'my-project',
+  activeFileId: null,
+  openFileIds: [],
+  workspaceName: 'untitled-workspace',
   
   messages: [],
   isGenerating: false,
