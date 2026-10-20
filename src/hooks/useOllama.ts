@@ -1,7 +1,7 @@
 import { useStore } from '../store';
 import { ChatMessage } from '../types';
 import { ExecutionPlan, PlanStep, ToolCall } from '../types/plan';
-import { executeTool, getToolPrompt, parseToolCall, ToolContext } from '../tools';
+import { executeTool, getDeveloperPrompt, getDirectorPrompt, getVerifierPrompt, parseToolCall, ToolContext } from '../tools';
 import { v4 as uuidv4 } from 'uuid';
 
 export function useOllama() {
@@ -69,43 +69,48 @@ export function useOllama() {
     return fullContent;
   };
 
-  // Generate plan - optimized for small models
+  // Generate plan - ULTRA-SIMPLE for small models
   const generatePlan = async (userRequest: string): Promise<ExecutionPlan> => {
     const fileList = getFileList();
+    const directorPrompt = getDirectorPrompt();
     
-    const systemPrompt = `You are the DIRECTOR. Create a step-by-step plan.
+    const systemPrompt = `${directorPrompt}
 
 Current files:
-${fileList}
+${fileList || '(empty workspace)'}
 
-Respond ONLY with JSON:
-{"goal":"brief goal","steps":[{"id":"1","title":"step title","description":"what to do"}]}
+User request: ${userRequest}
 
-Keep it simple. Max 5 steps.`;
+Create the plan NOW.`;
 
     const response = await streamChat([
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userRequest }
+      { role: 'user', content: 'Create the plan.' }
     ], ollamaConfig.directorModel);
     
+    // Parse simple format: GOAL: ... STEP 1: ... STEP 2: ...
     try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON in response');
+      const goalMatch = response.match(/GOAL:\s*(.+)/i);
+      const goal = goalMatch ? goalMatch[1].trim() : userRequest;
       
-      const parsed = JSON.parse(jsonMatch[0]);
+      const stepMatches = [...response.matchAll(/STEP\s*(\d+):\s*([^-]+)\s*-\s*(.+)/gi)];
       
-      return {
-        id: uuidv4(),
-        goal: parsed.goal || userRequest,
-        steps: (parsed.steps || []).map((step: any, idx: number) => ({
-          id: step.id || `step-${idx + 1}`,
-          title: step.title || `Step ${idx + 1}`,
-          description: step.description || '',
-          status: 'pending' as const
-        })),
-        status: 'planning',
-        createdAt: new Date()
-      };
+      if (stepMatches.length > 0) {
+        return {
+          id: uuidv4(),
+          goal,
+          steps: stepMatches.map((match, idx) => ({
+            id: `step-${idx + 1}`,
+            title: match[2].trim(),
+            description: match[3].trim(),
+            status: 'pending' as const
+          })),
+          status: 'planning',
+          createdAt: new Date()
+        };
+      }
+      
+      throw new Error('No steps found');
     } catch (error) {
       // Fallback: create simple plan
       return {
@@ -123,41 +128,39 @@ Keep it simple. Max 5 steps.`;
     }
   };
 
-  // Execute step - optimized for small models
+  // Execute step - ULTRA-SIMPLE for small models
   const executeStep = async (step: PlanStep, plan: ExecutionPlan): Promise<PlanStep> => {
     const fileList = getFileList();
-    const toolPrompt = getToolPrompt();
+    const developerPrompt = getDeveloperPrompt();
 
-    const systemPrompt = `You are the DEVELOPER. Execute this step using tools.
-
-${toolPrompt}
+    const systemPrompt = `${developerPrompt}
 
 Current files:
 ${fileList}
 
-Step to execute: ${step.title}
-Description: ${step.description}
+Your task: ${step.title}
+Details: ${step.description}
 
-Use tools to make changes. When done, respond with {"done":true,"summary":"what you did"}`;
+START NOW. Use ACTION: write_file to create files.`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: 'Execute the step now.' }
+      { role: 'user', content: 'Execute the step. Create the files now.' }
     ];
 
     const toolCalls: ToolCall[] = [];
     let summary = '';
     let iterations = 0;
-    const maxIterations = 8;
+    const maxIterations = 10;
+    let noToolCount = 0;
 
     while (iterations < maxIterations) {
       iterations++;
       const response = await streamChat(messages, ollamaConfig.executorModel);
       
       // Check if done
-      if (response.includes('"done"') && response.includes('true')) {
-        const summaryMatch = response.match(/"summary"\s*:\s*"([^"]+)"/);
-        summary = summaryMatch ? summaryMatch[1] : 'Step completed';
+      if (/DONE:\s*yes/i.test(response) || response.toLowerCase().includes('done: yes')) {
+        summary = response.substring(0, 200);
         break;
       }
       
@@ -165,6 +168,8 @@ Use tools to make changes. When done, respond with {"done":true,"summary":"what 
       const toolCall = parseToolCall(response);
       
       if (toolCall) {
+        noToolCount = 0; // Reset counter
+        
         const toolContext: ToolContext = {
           files: useStore.getState().files,
           workspaceName: useStore.getState().workspaceName,
@@ -186,14 +191,44 @@ Use tools to make changes. When done, respond with {"done":true,"summary":"what 
         messages.push({
           role: 'user',
           content: result.success 
-            ? `Tool result: ${result.output}\n\nContinue or respond with {"done":true,"summary":"..."}`
-            : `Tool failed: ${result.output}\n\nTry again or respond with {"done":true,"summary":"..."}`
+            ? `${result.output}\n\nContinue creating files or respond: DONE: Yes, I finished.`
+            : `ERROR: ${result.output}\n\nFix the error and try again.`
         });
       } else {
-        // No tool call found, treat as summary
-        summary = response.substring(0, 200);
-        break;
+        // No tool call found - THIS IS BAD, model is just talking
+        noToolCount++;
+        
+        if (noToolCount >= 2) {
+          // Model is not using tools, force it
+          messages.push({ role: 'assistant', content: response });
+          messages.push({
+            role: 'user',
+            content: `STOP TALKING. You MUST use ACTION: write_file to create files. Do it NOW. Example:
+ACTION: write_file
+PATH: src/main.ts
+CONTENT: console.log('hello')
+
+DO IT NOW.`
+          });
+        } else {
+          messages.push({ role: 'assistant', content: response });
+          messages.push({
+            role: 'user',
+            content: `You did not use any tools. You MUST use ACTION: write_file to create files. Example:
+ACTION: write_file
+PATH: example.ts
+CONTENT: // your code here
+
+Use the tool NOW.`
+          });
+        }
       }
+    }
+
+    if (toolCalls.length === 0) {
+      summary = 'ERROR: Developer did not create any files';
+    } else {
+      summary = `Created ${toolCalls.length} file(s): ${toolCalls.map(tc => tc.parameters.path).join(', ')}`;
     }
 
     return {
@@ -204,37 +239,37 @@ Use tools to make changes. When done, respond with {"done":true,"summary":"what 
     };
   };
 
-  // Verify step - optimized for small models
+  // Verify step - ULTRA-SIMPLE for small models
   const verifyStep = async (step: PlanStep): Promise<{ passed: boolean; feedback: string }> => {
     const fileList = getFileList();
+    const verifierPrompt = getVerifierPrompt();
 
-    const systemPrompt = `You are the DIRECTOR verifying work.
+    const systemPrompt = `${verifierPrompt}
 
 Step: ${step.title}
 Description: ${step.description}
 Developer did: ${step.developerResponse || 'No summary'}
-Tools used: ${step.toolsUsed?.length || 0}
+Files created: ${step.toolsUsed?.map(t => t.parameters.path).join(', ') || 'None'}
 
 Current files:
-${fileList}
+${fileList || '(empty)'}
 
-Respond ONLY with JSON:
-{"passed":true/false,"feedback":"brief feedback"}`;
+Verify NOW.`;
 
     const response = await streamChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: 'Verify the step.' }
     ], ollamaConfig.directorModel);
 
+    // Parse simple format: PASSED: yes/no FEEDBACK: ...
     try {
-      const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON');
+      const passedMatch = response.match(/PASSED:\s*(yes|no)/i);
+      const feedbackMatch = response.match(/FEEDBACK:\s*(.+)/i);
       
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        passed: parsed.passed === true,
-        feedback: parsed.feedback || 'No feedback'
-      };
+      const passed = passedMatch ? passedMatch[1].toLowerCase() === 'yes' : false;
+      const feedback = feedbackMatch ? feedbackMatch[1].trim() : 'No feedback';
+      
+      return { passed, feedback };
     } catch {
       return {
         passed: false,
