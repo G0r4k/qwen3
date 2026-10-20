@@ -1,10 +1,8 @@
 import { FileNode } from '../types';
 import { useStore } from '../store';
 
-// Simplified tool definitions for small models
 export interface Tool {
   name: string;
-  description: string;
   execute: (params: any, context: ToolContext) => Promise<ToolResult>;
 }
 
@@ -23,7 +21,6 @@ export interface ToolResult {
 // Helper functions
 function findFileByPath(files: FileNode[], path: string): FileNode | null {
   const parts = path.split('/').filter(p => p);
-  
   let searchIn: FileNode[] = files;
   if (files.length === 1 && files[0].type === 'folder' && files[0].children) {
     searchIn = files[0].children;
@@ -35,9 +32,7 @@ function findFileByPath(files: FileNode[], path: string): FileNode | null {
   for (const part of parts) {
     node = current.find(n => n.name === part) || null;
     if (!node) return null;
-    if (node.children) {
-      current = node.children;
-    }
+    if (node.children) current = node.children;
   }
 
   return node;
@@ -58,7 +53,6 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
   const parts = path.split('/').filter(p => p);
   const fileName = parts[parts.length - 1];
   
-  // If workspace is empty, create root folder
   let currentFiles = files;
   if (files.length === 0) {
     const { workspaceName } = useStore.getState();
@@ -71,44 +65,24 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
     }];
   }
   
-  // Simple case: file in root
   if (parts.length === 1) {
     if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
       return [{
         ...currentFiles[0],
         children: [
           ...(currentFiles[0].children || []),
-          {
-            id: fileName,
-            name: fileName,
-            type: 'file',
-            content,
-            language: getLanguageFromFileName(fileName)
-          }
+          { id: fileName, name: fileName, type: 'file', content, language: getLanguageFromFileName(fileName) }
         ]
       }];
     }
-    return [...currentFiles, {
-      id: fileName,
-      name: fileName,
-      type: 'file',
-      content,
-      language: getLanguageFromFileName(fileName)
-    }];
+    return [...currentFiles, { id: fileName, name: fileName, type: 'file', content, language: getLanguageFromFileName(fileName) }];
   }
   
-  // Complex case: file in subdirectory
   const dirPath = parts.slice(0, -1);
   
   const addToDir = (nodes: FileNode[], depth: number): FileNode[] => {
     if (depth >= dirPath.length) {
-      return [...nodes, {
-        id: path,
-        name: fileName,
-        type: 'file',
-        content,
-        language: getLanguageFromFileName(fileName)
-      }];
+      return [...nodes, { id: path, name: fileName, type: 'file', content, language: getLanguageFromFileName(fileName) }];
     }
     
     const dirName = dirPath[depth];
@@ -132,170 +106,160 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
   };
   
   if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
-    return [{
-      ...currentFiles[0],
-      children: addToDir(currentFiles[0].children || [], 0)
-    }];
+    return [{ ...currentFiles[0], children: addToDir(currentFiles[0].children || [], 0) }];
   }
   
   return addToDir(currentFiles, 0);
 }
 
-// Simplified tools - only 3 essential tools
+// Only 2 tools - ultra simple
 export const tools: Tool[] = [
   {
     name: 'write_file',
-    description: 'Create or update a file',
     execute: async (params, context) => {
       const { path, content } = params;
       if (!path || content === undefined) {
-        return { success: false, output: 'Missing path or content' };
+        return { success: false, output: 'ERROR: Missing path or content' };
       }
       
       const newFiles = createFileInTree(context.files, path, content);
       context.updateFiles(newFiles);
       
-      // Open the file
       const createdFile = findFileByPath(newFiles, path);
-      if (createdFile) {
-        context.openFile(createdFile.id);
-      }
+      if (createdFile) context.openFile(createdFile.id);
       
-      return { success: true, output: `Created/updated: ${path}` };
+      return { success: true, output: `✓ Created: ${path}` };
     }
   },
-  
-  {
-    name: 'read_file',
-    description: 'Read a file',
-    execute: async (params, context) => {
-      const { path } = params;
-      if (!path) {
-        return { success: false, output: 'Missing path' };
-      }
-      
-      const file = findFileByPath(context.files, path);
-      if (!file || file.type !== 'file') {
-        return { success: false, output: `File not found: ${path}` };
-      }
-      
-      return { success: true, output: file.content || '' };
-    }
-  },
-  
   {
     name: 'list_files',
-    description: 'List all files',
     execute: async (params, context) => {
-      const listDir = (nodes: FileNode[], prefix: string = ''): string[] => {
-        const result: string[] = [];
+      const list: string[] = [];
+      const traverse = (nodes: FileNode[], prefix: string = '') => {
         for (const node of nodes) {
           const fullPath = prefix ? `${prefix}/${node.name}` : node.name;
           if (node.type === 'folder') {
-            result.push(`📁 ${fullPath}/`);
-            if (node.children) {
-              result.push(...listDir(node.children, fullPath));
-            }
+            list.push(`📁 ${fullPath}/`);
+            if (node.children) traverse(node.children, fullPath);
           } else {
-            result.push(`📄 ${fullPath}`);
+            list.push(`📄 ${fullPath}`);
           }
         }
-        return result;
       };
-      
-      const fileList = listDir(context.files);
-      return { success: true, output: fileList.join('\n') || '(empty)' };
+      traverse(context.files);
+      return { success: true, output: list.join('\n') || '(empty)' };
     }
   }
 ];
 
-// Parse tool call from model response - very flexible parser
+// CRITICAL: Detect if response is a tool call or just text
 export function parseToolCall(response: string): { tool: string; params: any } | null {
-  // Try to find tool call in various formats
+  // Look for EXPLICIT tool call markers
+  const patterns = [
+    // Pattern 1: ACTION: write_file
+    /ACTION:\s*write_file\s+PATH:\s*([^\n]+)\s+CONTENT:\s*([\s\S]*?)(?=\nACTION:|$)/i,
+    // Pattern 2: [TOOL] write_file
+    /\[TOOL\]\s*write_file\s*\n\s*PATH:\s*([^\n]+)\s*\n\s*CONTENT:\s*([\s\S]*?)(?=\n\[TOOL\]|$)/i,
+    // Pattern 3: >>> write_file
+    />>>\s*write_file\s*\n\s*path:\s*([^\n]+)\s*\n\s*content:\s*([\s\S]*?)(?=\n>>>|$)/i,
+  ];
   
-  // Format 1: JSON with tool field
+  for (const pattern of patterns) {
+    const match = response.match(pattern);
+    if (match) {
+      return {
+        tool: 'write_file',
+        params: { path: match[1].trim(), content: match[2].trim() }
+      };
+    }
+  }
+  
+  // Pattern 4: JSON with explicit action field
   try {
-    const jsonMatch = response.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
+    const jsonMatch = response.match(/\{[\s\S]*?"action"\s*:\s*"write_file"[\s\S]*?\}/);
     if (jsonMatch) {
       const parsed = JSON.parse(jsonMatch[0]);
-      if (parsed.tool) {
-        return { tool: parsed.tool, params: parsed.parameters || parsed.params || {} };
+      if (parsed.action === 'write_file' && parsed.path && parsed.content !== undefined) {
+        return { tool: 'write_file', params: { path: parsed.path, content: parsed.content } };
       }
     }
   } catch {}
   
-  // Format 2: Simple text format "TOOL: write_file PATH: src/main.ts CONTENT: ..."
-  const toolMatch = response.match(/TOOL:\s*(\w+)/i);
-  if (toolMatch) {
-    const tool = toolMatch[1].toLowerCase();
-    const params: any = {};
-    
-    // Extract path
-    const pathMatch = response.match(/PATH:\s*([^\n]+)/i);
-    if (pathMatch) params.path = pathMatch[1].trim();
-    
-    // Extract content (everything after CONTENT: until end or next TOOL:)
-    const contentMatch = response.match(/CONTENT:\s*([\s\S]*?)(?=\n[A-Z]+:|$)/i);
-    if (contentMatch) params.content = contentMatch[1].trim();
-    
-    return { tool, params };
-  }
+  // Pattern 5: Simple JSON with tool field (but must have path AND content)
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*?"tool"\s*:\s*"write_file"[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.tool === 'write_file' && parsed.parameters?.path && parsed.parameters?.content !== undefined) {
+        return { tool: 'write_file', params: parsed.parameters };
+      }
+    }
+  } catch {}
   
-  // Format 3: Markdown code block with tool name
-  const codeBlockMatch = response.match(/```(\w+)\n([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    const tool = codeBlockMatch[1].toLowerCase();
-    const content = codeBlockMatch[2];
-    
-    // Try to extract path from the content or preceding text
-    const pathMatch = response.match(/(?:path|file):\s*([^\n]+)/i);
-    const path = pathMatch ? pathMatch[1].trim() : `file.${tool === 'typescript' ? 'ts' : tool === 'javascript' ? 'js' : 'txt'}`;
-    
-    return { tool: 'write_file', params: { path, content } };
+  // Pattern 6: list_files
+  if (/ACTION:\s*list_files/i.test(response) || 
+      /\[TOOL\]\s*list_files/i.test(response) ||
+      />>>\s*list_files/i.test(response)) {
+    return { tool: 'list_files', params: {} };
   }
   
   return null;
 }
 
-export async function executeTool(
-  toolName: string,
-  params: any,
-  context: ToolContext
-): Promise<ToolResult> {
+export async function executeTool(toolName: string, params: any, context: ToolContext): Promise<ToolResult> {
   const tool = tools.find(t => t.name === toolName);
-  
-  if (!tool) {
-    return { success: false, output: `Unknown tool: ${toolName}` };
-  }
+  if (!tool) return { success: false, output: `Unknown tool: ${toolName}` };
   
   try {
     return await tool.execute(params, context);
   } catch (error: any) {
-    return { success: false, output: error.message || 'Tool execution failed' };
+    return { success: false, output: error.message || 'Tool failed' };
   }
 }
 
-// Get simplified tool descriptions for small models
-export function getToolPrompt(): string {
-  return `You have 3 tools available:
+// ULTRA-SIMPLE prompt for small models
+export function getDeveloperPrompt(): string {
+  return `You are a DEVELOPER. You MUST use tools to create files.
 
-1. write_file - Create or update a file
-   Parameters: path (string), content (string)
-   Example: write_file({path: "src/main.ts", content: "console.log('hello')"})
+RULES:
+1. To create a file, respond EXACTLY like this:
+   ACTION: write_file
+   PATH: src/main.ts
+   CONTENT: console.log('hello')
 
-2. read_file - Read a file
-   Parameters: path (string)
-   Example: read_file({path: "src/main.ts"})
+2. To list files, respond:
+   ACTION: list_files
 
-3. list_files - List all files
-   Parameters: none
-   Example: list_files({})
+3. When completely done, respond:
+   DONE: Yes, I finished.
 
-To use a tool, respond with JSON:
-{"tool": "tool_name", "parameters": {...}}
+DO NOT just describe what to do. USE THE TOOLS to create actual files.
 
-When done, respond with:
-{"done": true, "summary": "What was accomplished"}
+Example:
+User: Create a hello world file
+You: 
+ACTION: write_file
+PATH: hello.txt
+CONTENT: Hello World!
 
-IMPORTANT: Use tools to make actual changes. Don't just describe what to do.`;
+Now execute the step using tools.`;
+}
+
+export function getDirectorPrompt(): string {
+  return `You are the DIRECTOR. Create a simple plan.
+
+Respond ONLY with this format:
+GOAL: brief description
+STEP 1: title - description
+STEP 2: title - description
+
+Keep it simple. Max 3 steps.`;
+}
+
+export function getVerifierPrompt(): string {
+  return `You are the VERIFIER. Check if the step was completed.
+
+Respond ONLY with:
+PASSED: yes/no
+FEEDBACK: brief comment`;
 }
