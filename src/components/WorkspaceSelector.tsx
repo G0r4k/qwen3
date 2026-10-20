@@ -9,104 +9,93 @@ export default function WorkspaceSelector() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
-    if (!fileList) return;
+    if (!fileList || fileList.length === 0) return;
 
-    const files: FileNode[] = [];
-    const fileTree: Record<string, FileNode> = {};
+    // Get root folder name from first file
+    const firstFile = fileList[0];
+    const firstPath: string = (firstFile as any).webkitRelativePath || firstFile.name;
+    const rootFolderName = firstPath.split('/')[0];
+    
+    // Update workspace name
+    if (workspaceName === 'untitled-workspace' && rootFolderName) {
+      setWorkspaceName(rootFolderName);
+    }
 
+    // Build file tree structure
+    const tree: Record<string, any> = {};
+    
     // Process all files
     for (let i = 0; i < fileList.length; i++) {
-      const file: File = fileList[i];
-      const path: string = (file as any).webkitRelativePath || file.name;
-      const parts: string[] = path.split('/');
+      const file = fileList[i];
+      const fullPath: string = (file as any).webkitRelativePath || file.name;
+      const parts = fullPath.split('/');
+      const fileName = parts[parts.length - 1];
       
       // Read file content
       const content = await file.text();
       
       // Create file node
       const fileNode: FileNode = {
-        id: path,
-        name: parts[parts.length - 1],
+        id: fullPath,
+        name: fileName,
         type: 'file',
         content,
-        language: getLanguageFromFileName(parts[parts.length - 1])
+        language: getLanguageFromFileName(fileName)
       };
-
-      // Build directory structure
-      let currentPath = '';
-      for (let j = 0; j < parts.length - 1; j++) {
-        const prevPath = currentPath;
-        currentPath = currentPath ? `${currentPath}/${parts[j]}` : parts[j];
+      
+      // Store file with its full path as key
+      tree[fullPath] = fileNode;
+      
+      // Create parent directories
+      for (let j = parts.length - 2; j >= 0; j--) {
+        const dirPath = parts.slice(0, j + 1).join('/');
+        const dirName = parts[j];
         
-        if (!fileTree[currentPath]) {
-          fileTree[currentPath] = {
-            id: currentPath,
-            name: parts[j],
+        if (!tree[dirPath]) {
+          tree[dirPath] = {
+            id: dirPath,
+            name: dirName,
             type: 'folder',
             isOpen: true,
             children: []
           };
-          
-          if (prevPath && fileTree[prevPath]?.children) {
-            fileTree[prevPath].children!.push(fileTree[currentPath]);
+        }
+      }
+    }
+    
+    // Build hierarchy by adding children to parents
+    const allPaths = Object.keys(tree).sort();
+    for (const path of allPaths) {
+      const node = tree[path];
+      if (node.type === 'file') {
+        // Find parent directory
+        const parts = path.split('/');
+        const parentPath = parts.slice(0, -1).join('/');
+        if (tree[parentPath] && tree[parentPath].children) {
+          tree[parentPath].children.push(node);
+        }
+      } else if (node.type === 'folder') {
+        // Find parent directory
+        const parts = path.split('/');
+        if (parts.length > 1) {
+          const parentPath = parts.slice(0, -1).join('/');
+          if (tree[parentPath] && tree[parentPath].children) {
+            tree[parentPath].children.push(node);
           }
         }
       }
-
-      // Add file to parent directory or root
-      const parentPath = parts.slice(0, -1).join('/');
-      if (parentPath && fileTree[parentPath]?.children) {
-        fileTree[parentPath].children!.push(fileNode);
-      } else {
-        files.push(fileNode);
-      }
-    }
-
-    // Add root directories to files array
-    const rootDirs = Object.values(fileTree).filter(
-      dir => !dir.id.includes('/')
-    );
-    files.push(...rootDirs);
-
-    // Determine root folder name from the uploaded path
-    const firstFile = fileList[0];
-    const firstPath: string = (firstFile as any).webkitRelativePath || firstFile.name;
-    const rootFolderName = firstPath.split('/')[0];
-    
-    // Update workspace name if it's still the default
-    if (workspaceName === 'untitled-workspace' && rootFolderName) {
-      setWorkspaceName(rootFolderName);
     }
     
-    // Create root node if we have multiple top-level items
-    if (files.length > 1) {
-      const rootName = rootFolderName || workspaceName || 'workspace';
-      setWorkspaceFiles([{
-        id: rootName,
-        name: rootName,
-        type: 'folder',
-        isOpen: true,
-        children: files
-      }]);
-    } else if (files.length === 1) {
-      // Single top-level item - wrap it in a root if it's a folder
-      const single = files[0];
-      if (single.type === 'folder') {
-        setWorkspaceFiles([single]);
-        if (workspaceName === 'untitled-workspace') {
-          setWorkspaceName(single.name);
-        }
-      } else {
-        const rootName = workspaceName || 'workspace';
-        setWorkspaceFiles([{
-          id: rootName,
-          name: rootName,
-          type: 'folder',
-          isOpen: true,
-          children: files
-        }]);
-      }
-    }
+    // Get root nodes (folders/files at the top level)
+    const rootNodes = Object.values(tree).filter((node: any) => {
+      const path = node.id;
+      const parts = path.split('/');
+      // Root nodes have only one part (the root folder name)
+      return parts.length === 1;
+    });
+    
+    // Set the workspace files
+    setWorkspaceFiles(rootNodes);
 
     // Reset input
     if (fileInputRef.current) {
@@ -128,13 +117,8 @@ export default function WorkspaceSelector() {
 
   const handleResetWorkspace = () => {
     if (confirm('Are you sure you want to reset the workspace? This will clear all files.')) {
-      setWorkspaceFiles([{
-        id: 'root',
-        name: workspaceName || 'workspace',
-        type: 'folder',
-        isOpen: true,
-        children: []
-      }]);
+      setWorkspaceFiles([]);
+      setWorkspaceName('untitled-workspace');
     }
   };
 

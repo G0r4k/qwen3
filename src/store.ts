@@ -2,6 +2,18 @@ import { create } from 'zustand';
 import { FileNode, ChatMessage, OllamaConfig, TerminalLine, PanelView } from './types';
 import { ExecutionPlan, PlanStep } from './types/plan';
 
+function getLanguageFromFileName(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript',
+    js: 'javascript', jsx: 'javascript',
+    json: 'json', html: 'html', css: 'css',
+    md: 'markdown', py: 'python', rs: 'rust',
+    go: 'go', java: 'java', cpp: 'cpp', c: 'c'
+  };
+  return map[ext] || 'plaintext';
+}
+
 interface AppState {
   // Files
   files: FileNode[];
@@ -50,6 +62,10 @@ interface AppState {
   // Workspace actions
   setWorkspaceName: (name: string) => void;
   setWorkspaceFiles: (files: FileNode[]) => void;
+  createFile: (parentPath: string, fileName: string, content?: string) => void;
+  createFolder: (parentPath: string, folderName: string) => void;
+  deleteFile: (fileId: string) => void;
+  renameFile: (fileId: string, newName: string) => void;
   
   addTerminalLine: (line: TerminalLine) => void;
   clearTerminal: () => void;
@@ -178,6 +194,183 @@ export const useStore = create<AppState>((set, get) => ({
   // Workspace actions
   setWorkspaceName: (name) => set({ workspaceName: name }),
   setWorkspaceFiles: (files) => set({ files }),
+  
+  createFile: (parentPath, fileName, content = '') => {
+    const { files, workspaceName } = get();
+    const fileId = parentPath ? `${parentPath}/${fileName}` : fileName;
+    
+    const newFile: FileNode = {
+      id: fileId,
+      name: fileName,
+      type: 'file',
+      content,
+      language: getLanguageFromFileName(fileName)
+    };
+    
+    if (!parentPath) {
+      // Add to root
+      if (files.length === 0) {
+        // Create root folder first
+        set({
+          files: [{
+            id: workspaceName,
+            name: workspaceName,
+            type: 'folder',
+            isOpen: true,
+            children: [newFile]
+          }]
+        });
+      } else if (files.length === 1 && files[0].type === 'folder') {
+        set({
+          files: [{
+            ...files[0],
+            children: [...(files[0].children || []), newFile]
+          }]
+        });
+      } else {
+        set({ files: [...files, newFile] });
+      }
+    } else {
+      // Add to specific folder
+      const addToFolder = (nodes: FileNode[], path: string): FileNode[] => {
+        const parts = path.split('/');
+        const folderName = parts[parts.length - 1];
+        
+        return nodes.map(node => {
+          if (node.name === folderName && node.type === 'folder') {
+            if (parts.length === 1) {
+              return { ...node, children: [...(node.children || []), newFile] };
+            } else {
+              return { ...node, children: addToFolder(node.children || [], parts.slice(1).join('/')) };
+            }
+          }
+          return node;
+        });
+      };
+      
+      // If we have a root folder, search inside it
+      if (files.length === 1 && files[0].type === 'folder') {
+        set({
+          files: [{
+            ...files[0],
+            children: addToFolder(files[0].children || [], parentPath)
+          }]
+        });
+      } else {
+        set({ files: addToFolder(files, parentPath) });
+      }
+    }
+  },
+  
+  createFolder: (parentPath, folderName) => {
+    const { files, workspaceName } = get();
+    const folderId = parentPath ? `${parentPath}/${folderName}` : folderName;
+    
+    const newFolder: FileNode = {
+      id: folderId,
+      name: folderName,
+      type: 'folder',
+      isOpen: true,
+      children: []
+    };
+    
+    if (!parentPath) {
+      // Add to root
+      if (files.length === 0) {
+        set({
+          files: [{
+            id: workspaceName,
+            name: workspaceName,
+            type: 'folder',
+            isOpen: true,
+            children: [newFolder]
+          }]
+        });
+      } else if (files.length === 1 && files[0].type === 'folder') {
+        set({
+          files: [{
+            ...files[0],
+            children: [...(files[0].children || []), newFolder]
+          }]
+        });
+      } else {
+        set({ files: [...files, newFolder] });
+      }
+    } else {
+      // Add to specific folder
+      const addToFolder = (nodes: FileNode[], path: string): FileNode[] => {
+        const parts = path.split('/');
+        const targetName = parts[parts.length - 1];
+        
+        return nodes.map(node => {
+          if (node.name === targetName && node.type === 'folder') {
+            if (parts.length === 1) {
+              return { ...node, children: [...(node.children || []), newFolder] };
+            } else {
+              return { ...node, children: addToFolder(node.children || [], parts.slice(1).join('/')) };
+            }
+          }
+          return node;
+        });
+      };
+      
+      if (files.length === 1 && files[0].type === 'folder') {
+        set({
+          files: [{
+            ...files[0],
+            children: addToFolder(files[0].children || [], parentPath)
+          }]
+        });
+      } else {
+        set({ files: addToFolder(files, parentPath) });
+      }
+    }
+  },
+  
+  deleteFile: (fileId) => {
+    const { files } = get();
+    
+    const removeFromTree = (nodes: FileNode[]): FileNode[] => {
+      return nodes
+        .filter(node => node.id !== fileId)
+        .map(node => {
+          if (node.children) {
+            return { ...node, children: removeFromTree(node.children) };
+          }
+          return node;
+        });
+    };
+    
+    set({ files: removeFromTree(files) });
+    
+    // Close file if it was open
+    const { activeFileId, openFileIds } = get();
+    if (activeFileId === fileId) {
+      set({ activeFileId: null });
+    }
+    if (openFileIds.includes(fileId)) {
+      set({ openFileIds: openFileIds.filter(id => id !== fileId) });
+    }
+  },
+  
+  renameFile: (fileId, newName) => {
+    const { files } = get();
+    
+    const renameInTree = (nodes: FileNode[]): FileNode[] => {
+      return nodes.map(node => {
+        if (node.id === fileId) {
+          const newId = node.id.replace(/[^/]+$/, newName);
+          return { ...node, id: newId, name: newName };
+        }
+        if (node.children) {
+          return { ...node, children: renameInTree(node.children) };
+        }
+        return node;
+      });
+    };
+    
+    set({ files: renameInTree(files) });
+  },
   
   addTerminalLine: (line) => set({ terminalLines: [...get().terminalLines, line] }),
   clearTerminal: () => set({ terminalLines: [] }),
