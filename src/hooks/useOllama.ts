@@ -1,7 +1,7 @@
 import { useStore } from '../store';
 import { ChatMessage } from '../types';
 import { ExecutionPlan, PlanStep, ToolCall } from '../types/plan';
-import { executeTool, getToolDefinitions, ToolContext } from '../tools';
+import { executeTool, getToolPrompt, parseToolCall, ToolContext } from '../tools';
 import { v4 as uuidv4 } from 'uuid';
 
 export function useOllama() {
@@ -39,14 +39,10 @@ export function useOllama() {
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama error: ${response.status} ${response.statusText}`);
+      throw new Error(`Ollama error: ${response.status}`);
     }
 
-    if (!response.body) {
-      throw new Error('No response body from Ollama');
-    }
-
-    const reader = response.body.getReader();
+    const reader = response.body?.getReader();
     if (!reader) throw new Error('No response body');
 
     const decoder = new TextDecoder();
@@ -66,64 +62,39 @@ export function useOllama() {
             fullContent += json.message.content;
             onChunk?.(json.message.content);
           }
-        } catch {
-          // Skip invalid JSON
-        }
+        } catch {}
       }
     }
 
     return fullContent;
   };
 
+  // Generate plan - optimized for small models
   const generatePlan = async (userRequest: string): Promise<ExecutionPlan> => {
-    const fileContext = getFileContext();
-    const toolDefs = getToolDefinitions();
+    const fileList = getFileList();
+    
+    const systemPrompt = `You are the DIRECTOR. Create a step-by-step plan.
 
-    const systemPrompt = `You are the DIRECTOR AI - a senior software architect. Your job is to analyze user requests and create a detailed step-by-step implementation plan.
+Current files:
+${fileList}
 
-IMPORTANT: You do NOT write code yourself. You create a plan that will be executed by the DEVELOPER AI.
+Respond ONLY with JSON:
+{"goal":"brief goal","steps":[{"id":"1","title":"step title","description":"what to do"}]}
 
-For each step, provide:
-1. A clear title
-2. A detailed description of what needs to be done
-3. Specific files to create/modify
-4. Expected outcome
+Keep it simple. Max 5 steps.`;
 
-Available tools for the Developer:
-${toolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
-
-Current workspace structure:
-${fileContext}
-
-Respond in this EXACT JSON format:
-{
-  "goal": "Brief description of the overall goal",
-  "steps": [
-    {
-      "id": "step-1",
-      "title": "Step title",
-      "description": "Detailed description of what to do"
-    }
-  ]
-}
-
-Be specific and actionable. Each step should be completable by the Developer using the available tools.`;
-
-    const messages = [
+    const response = await streamChat([
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userRequest }
-    ];
-
-    const response = await streamChat(messages, ollamaConfig.directorModel);
+    ], ollamaConfig.directorModel);
     
-    // Parse the JSON response
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON found in response');
+      if (!jsonMatch) throw new Error('No JSON in response');
       
       const parsed = JSON.parse(jsonMatch[0]);
       
-      const plan: ExecutionPlan = {
+      return {
         id: uuidv4(),
         goal: parsed.goal || userRequest,
         steps: (parsed.steps || []).map((step: any, idx: number) => ({
@@ -135,116 +106,94 @@ Be specific and actionable. Each step should be completable by the Developer usi
         status: 'planning',
         createdAt: new Date()
       };
-
-      return plan;
     } catch (error) {
-      throw new Error(`Failed to parse plan from Director: ${error}`);
+      // Fallback: create simple plan
+      return {
+        id: uuidv4(),
+        goal: userRequest,
+        steps: [{
+          id: 'step-1',
+          title: 'Execute request',
+          description: userRequest,
+          status: 'pending'
+        }],
+        status: 'planning',
+        createdAt: new Date()
+      };
     }
   };
 
+  // Execute step - optimized for small models
   const executeStep = async (step: PlanStep, plan: ExecutionPlan): Promise<PlanStep> => {
-    const fileContext = getFileContext();
-    const toolDefs = getToolDefinitions();
+    const fileList = getFileList();
+    const toolPrompt = getToolPrompt();
 
-    const systemPrompt = `You are the DEVELOPER AI - an expert programmer. You execute implementation steps using the available tools.
+    const systemPrompt = `You are the DEVELOPER. Execute this step using tools.
 
-You MUST use the tools to make changes to the workspace. Do NOT just describe what to do - actually DO it using the tools.
+${toolPrompt}
 
-Available tools:
-${toolDefs.map(t => `- ${t.name}: ${t.description}`).join('\n')}
+Current files:
+${fileList}
 
-To use a tool, respond with JSON in this format:
-{
-  "tool": "tool_name",
-  "parameters": { ... }
-}
+Step to execute: ${step.title}
+Description: ${step.description}
 
-You can use multiple tools in sequence. After each tool use, you'll see the result and can continue.
-
-When you're done with the step, respond with:
-{
-  "done": true,
-  "summary": "Brief summary of what was accomplished"
-}
-
-Current workspace:
-${fileContext}
-
-Your task:
-${step.description}`;
+Use tools to make changes. When done, respond with {"done":true,"summary":"what you did"}`;
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: `Execute step: ${step.title}` }
+      { role: 'user', content: 'Execute the step now.' }
     ];
 
     const toolCalls: ToolCall[] = [];
     let summary = '';
-    let maxIterations = 10; // Prevent infinite loops
+    let iterations = 0;
+    const maxIterations = 8;
 
-    while (maxIterations > 0) {
+    while (iterations < maxIterations) {
+      iterations++;
       const response = await streamChat(messages, ollamaConfig.executorModel);
       
-      // Try to parse tool call
-      try {
-        const jsonMatch = response.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          
-          // Check if done
-          if (parsed.done) {
-            summary = parsed.summary || 'Step completed';
-            break;
-          }
-          
-          // Execute tool
-          if (parsed.tool) {
-            const toolContext: ToolContext = {
-              files: useStore.getState().files,
-              workspaceName: useStore.getState().workspaceName,
-              updateFiles: (newFiles) => setWorkspaceFiles(newFiles),
-              openFile: (fileId) => useStore.getState().openFile(fileId),
-              addTerminalLine: (line) => {
-                addTerminalLine({
-                  id: uuidv4(),
-                  content: line.content,
-                  type: line.type,
-                  timestamp: new Date()
-                });
-              }
-            };
-
-            const result = await executeTool(parsed.tool, parsed.parameters || {}, toolContext);
-            
-            toolCalls.push({
-              tool: parsed.tool,
-              parameters: parsed.parameters,
-              result: result.output,
-              success: result.success
-            });
-
-            // Add tool result to messages
-            messages.push({
-              role: 'assistant',
-              content: response
-            });
-            messages.push({
-              role: 'user',
-              content: result.success 
-                ? `Tool executed successfully:\n${result.output}\n\nContinue with the next action or mark as done.`
-                : `Tool failed: ${result.error}\n\nTry again or use a different approach.`
-            });
-
-            continue;
-          }
-        }
-      } catch (error) {
-        // Not JSON, treat as summary
-        summary = response;
+      // Check if done
+      if (response.includes('"done"') && response.includes('true')) {
+        const summaryMatch = response.match(/"summary"\s*:\s*"([^"]+)"/);
+        summary = summaryMatch ? summaryMatch[1] : 'Step completed';
         break;
       }
+      
+      // Try to parse tool call
+      const toolCall = parseToolCall(response);
+      
+      if (toolCall) {
+        const toolContext: ToolContext = {
+          files: useStore.getState().files,
+          workspaceName: useStore.getState().workspaceName,
+          updateFiles: (newFiles) => setWorkspaceFiles(newFiles),
+          openFile: (fileId) => useStore.getState().openFile(fileId)
+        };
 
-      maxIterations--;
+        const result = await executeTool(toolCall.tool, toolCall.params, toolContext);
+        
+        toolCalls.push({
+          tool: toolCall.tool,
+          parameters: toolCall.params,
+          result: result.output,
+          success: result.success
+        });
+
+        // Add to conversation
+        messages.push({ role: 'assistant', content: response });
+        messages.push({
+          role: 'user',
+          content: result.success 
+            ? `Tool result: ${result.output}\n\nContinue or respond with {"done":true,"summary":"..."}`
+            : `Tool failed: ${result.output}\n\nTry again or respond with {"done":true,"summary":"..."}`
+        });
+      } else {
+        // No tool call found, treat as summary
+        summary = response.substring(0, 200);
+        break;
+      }
     }
 
     return {
@@ -255,54 +204,41 @@ ${step.description}`;
     };
   };
 
-  const verifyStep = async (step: PlanStep, plan: ExecutionPlan): Promise<{ passed: boolean; feedback: string }> => {
-    const fileContext = getFileContext();
+  // Verify step - optimized for small models
+  const verifyStep = async (step: PlanStep): Promise<{ passed: boolean; feedback: string }> => {
+    const fileList = getFileList();
 
-    const systemPrompt = `You are the DIRECTOR AI verifying the work of the DEVELOPER AI.
+    const systemPrompt = `You are the DIRECTOR verifying work.
 
-Review the step that was just completed and verify it was done correctly.
-
-Original step:
-Title: ${step.title}
+Step: ${step.title}
 Description: ${step.description}
+Developer did: ${step.developerResponse || 'No summary'}
+Tools used: ${step.toolsUsed?.length || 0}
 
-Developer's summary:
-${step.developerResponse || 'No summary provided'}
+Current files:
+${fileList}
 
-Tools used:
-${step.toolsUsed?.map(t => `- ${t.tool}: ${t.success ? '✓' : '✗'} ${JSON.stringify(t.parameters)}`).join('\n') || 'None'}
+Respond ONLY with JSON:
+{"passed":true/false,"feedback":"brief feedback"}`;
 
-Current workspace state:
-${fileContext}
-
-Respond in this EXACT JSON format:
-{
-  "passed": true/false,
-  "feedback": "Detailed feedback on what was done well and what needs improvement"
-}
-
-Be thorough but fair. If the step was completed correctly, mark it as passed.`;
-
-    const messages = [
+    const response = await streamChat([
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: 'Verify the completed step' }
-    ];
-
-    const response = await streamChat(messages, ollamaConfig.directorModel);
+      { role: 'user', content: 'Verify the step.' }
+    ], ollamaConfig.directorModel);
 
     try {
       const jsonMatch = response.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON found');
+      if (!jsonMatch) throw new Error('No JSON');
       
       const parsed = JSON.parse(jsonMatch[0]);
       return {
-        passed: parsed.passed || false,
-        feedback: parsed.feedback || 'No feedback provided'
+        passed: parsed.passed === true,
+        feedback: parsed.feedback || 'No feedback'
       };
-    } catch (error) {
+    } catch {
       return {
         passed: false,
-        feedback: `Failed to parse verification: ${error}`
+        feedback: 'Could not parse verification'
       };
     }
   };
@@ -313,7 +249,7 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
 
     addTerminalLine({
       id: uuidv4(),
-      content: `[Director] Analyzing request...`,
+      content: `[Director] Planning...`,
       type: 'info',
       timestamp: new Date()
     });
@@ -326,17 +262,10 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
       addMessage({
         id: uuidv4(),
         role: 'assistant',
-        content: `## 📋 Implementation Plan\n\n**Goal:** ${plan.goal}\n\n**Steps:**\n${plan.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}`,
+        content: `📋 Plan: ${plan.goal}\n\n${plan.steps.map((s, i) => `${i + 1}. ${s.title}`).join('\n')}`,
         timestamp: new Date(),
         model: ollamaConfig.directorModel,
         phase: 'planning'
-      });
-
-      addTerminalLine({
-        id: uuidv4(),
-        content: `[Director] Plan created with ${plan.steps.length} steps`,
-        type: 'info',
-        timestamp: new Date()
       });
 
       // Phase 2: Execute each step
@@ -353,7 +282,6 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
           timestamp: new Date()
         });
 
-        // Update step status
         updatePlanStep(step.id, { status: 'in_progress' });
 
         // Execute step
@@ -367,16 +295,9 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
           timestamp: new Date()
         });
 
-        // Phase 3: Verify step
+        // Phase 3: Verify
         setCurrentPhase('verifying');
-        addTerminalLine({
-          id: uuidv4(),
-          content: `[Director] Verifying step ${i + 1}...`,
-          type: 'info',
-          timestamp: new Date()
-        });
-
-        const verification = await verifyStep(completedStep, plan);
+        const verification = await verifyStep(completedStep);
         updatePlanStep(step.id, { 
           verificationResult: verification,
           status: verification.passed ? 'verified' : 'failed'
@@ -384,7 +305,7 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
 
         addTerminalLine({
           id: uuidv4(),
-          content: `[Director] ${verification.passed ? '✓ Verified' : '✗ Failed'}: ${verification.feedback}`,
+          content: `[Director] ${verification.passed ? '✓' : '✗'} ${verification.feedback}`,
           type: verification.passed ? 'info' : 'error',
           timestamp: new Date()
         });
@@ -392,22 +313,12 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
         setCurrentPhase('executing');
       }
 
-      // All steps completed
       updatePlanStatus('completed');
       addTerminalLine({
         id: uuidv4(),
-        content: `\n✓ All steps completed successfully!`,
+        content: `\n✓ Complete!`,
         type: 'info',
         timestamp: new Date()
-      });
-
-      addMessage({
-        id: uuidv4(),
-        role: 'assistant',
-        content: `## ✅ Implementation Complete\n\nAll ${plan.steps.length} steps have been executed and verified.\n\n${plan.steps.map((s, i) => `${i + 1}. ${s.title} - ${s.verificationResult?.passed ? '✓' : '✗'}`).join('\n')}`,
-        timestamp: new Date(),
-        model: ollamaConfig.directorModel,
-        phase: 'executing'
       });
 
     } catch (error: any) {
@@ -418,44 +329,34 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
         type: 'error',
         timestamp: new Date()
       });
-      
-      addMessage({
-        id: uuidv4(),
-        role: 'assistant',
-        content: `Error: ${error.message}`,
-        timestamp: new Date()
-      });
     } finally {
       setGenerating(false);
       setCurrentPhase('idle');
     }
   };
 
-  const getFileContext = (): string => {
+  const getFileList = (): string => {
     const { files } = useStore.getState();
-    const context: string[] = [];
+    const list: string[] = [];
 
     const traverse = (nodes: typeof files, path: string = '') => {
       for (const node of nodes) {
         const fullPath = path ? `${path}/${node.name}` : node.name;
-        if (node.type === 'file' && node.content) {
-          context.push(`--- ${fullPath} ---\n${node.content}\n`);
+        if (node.type === 'file') {
+          list.push(fullPath);
         }
         if (node.children) traverse(node.children, fullPath);
       }
     };
 
     traverse(files);
-    return context.join('\n');
+    return list.length > 0 ? list.join('\n') : '(empty workspace)';
   };
 
   const checkConnection = async (): Promise<{ connected: boolean; error?: string }> => {
     try {
       const res = await fetch(`${ollamaConfig.baseUrl}/api/tags`);
-      if (res.ok) {
-        return { connected: true };
-      }
-      return { connected: false, error: `HTTP ${res.status}` };
+      return { connected: res.ok };
     } catch (error: any) {
       return { connected: false, error: error.message };
     }
@@ -474,9 +375,7 @@ Be thorough but fair. If the step was completed correctly, mark it as passed.`;
 
   return {
     runDualModelPipeline,
-    streamChat,
     checkConnection,
-    listModels,
-    getFileContext
+    listModels
   };
 }

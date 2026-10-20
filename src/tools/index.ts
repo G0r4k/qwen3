@@ -1,15 +1,10 @@
 import { FileNode } from '../types';
 import { useStore } from '../store';
 
-// Tool definitions for the Developer AI
+// Simplified tool definitions for small models
 export interface Tool {
   name: string;
   description: string;
-  parameters: Record<string, {
-    type: string;
-    description: string;
-    required?: boolean;
-  }>;
   execute: (params: any, context: ToolContext) => Promise<ToolResult>;
 }
 
@@ -18,31 +13,17 @@ export interface ToolContext {
   workspaceName: string;
   updateFiles: (files: FileNode[]) => void;
   openFile: (fileId: string) => void;
-  addTerminalLine: (line: { content: string; type: 'info' | 'error' | 'output' }) => void;
 }
 
 export interface ToolResult {
   success: boolean;
   output: string;
-  error?: string;
 }
 
 // Helper functions
-function findFileById(files: FileNode[], id: string): FileNode | null {
-  for (const node of files) {
-    if (node.id === id) return node;
-    if (node.children) {
-      const found = findFileById(node.children, id);
-      if (found) return found;
-    }
-  }
-  return null;
-}
-
 function findFileByPath(files: FileNode[], path: string): FileNode | null {
   const parts = path.split('/').filter(p => p);
   
-  // If we have a single root folder, search inside it
   let searchIn: FileNode[] = files;
   if (files.length === 1 && files[0].type === 'folder' && files[0].children) {
     searchIn = files[0].children;
@@ -62,59 +43,36 @@ function findFileByPath(files: FileNode[], path: string): FileNode | null {
   return node;
 }
 
-function updateFileInTree(files: FileNode[], path: string, content: string): FileNode[] {
-  const parts = path.split('/').filter(p => p);
-  
-  const updateNode = (nodes: FileNode[], depth: number): FileNode[] => {
-    if (depth >= parts.length) return nodes;
-    
-    const name = parts[depth];
-    const isLast = depth === parts.length - 1;
-    
-    return nodes.map(node => {
-      if (node.name === name) {
-        if (isLast) {
-          return { ...node, content };
-        } else if (node.children) {
-          return { ...node, children: updateNode(node.children, depth + 1) };
-        }
-      }
-      return node;
-    });
+function getLanguageFromFileName(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const map: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript',
+    js: 'javascript', jsx: 'javascript',
+    json: 'json', html: 'html', css: 'css',
+    md: 'markdown', py: 'python'
   };
-  
-  // If we have a single root folder, search inside it
-  if (files.length === 1 && files[0].type === 'folder' && files[0].children) {
-    return [{
-      ...files[0],
-      children: updateNode(files[0].children, 0)
-    }];
-  }
-  
-  return updateNode(files, 0);
+  return map[ext] || 'plaintext';
 }
 
 function createFileInTree(files: FileNode[], path: string, content: string): FileNode[] {
   const parts = path.split('/').filter(p => p);
   const fileName = parts[parts.length - 1];
-  const dirPath = parts.slice(0, -1);
   
-  // If workspace is empty, create a root folder first
+  // If workspace is empty, create root folder
   let currentFiles = files;
   if (files.length === 0) {
     const { workspaceName } = useStore.getState();
-    const rootName = workspaceName || 'workspace';
     currentFiles = [{
-      id: rootName,
-      name: rootName,
+      id: workspaceName,
+      name: workspaceName,
       type: 'folder',
       isOpen: true,
       children: []
     }];
   }
   
-  if (dirPath.length === 0) {
-    // Create in root - find the root folder and add to it
+  // Simple case: file in root
+  if (parts.length === 1) {
     if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
       return [{
         ...currentFiles[0],
@@ -130,7 +88,6 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
         ]
       }];
     }
-    // No root folder, just add to root
     return [...currentFiles, {
       id: fileName,
       name: fileName,
@@ -140,10 +97,11 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
     }];
   }
   
-  // Create in subdirectory
+  // Complex case: file in subdirectory
+  const dirPath = parts.slice(0, -1);
+  
   const addToDir = (nodes: FileNode[], depth: number): FileNode[] => {
     if (depth >= dirPath.length) {
-      // Add file here
       return [...nodes, {
         id: path,
         name: fileName,
@@ -163,7 +121,6 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
           : n
       );
     } else {
-      // Create directory
       return [...nodes, {
         id: dirPath.slice(0, depth + 1).join('/'),
         name: dirName,
@@ -174,7 +131,6 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
     }
   };
   
-  // If we have a root folder, add to its children
   if (currentFiles.length === 1 && currentFiles[0].type === 'folder') {
     return [{
       ...currentFiles[0],
@@ -185,100 +141,51 @@ function createFileInTree(files: FileNode[], path: string, content: string): Fil
   return addToDir(currentFiles, 0);
 }
 
-function getLanguageFromFileName(fileName: string): string {
-  const ext = fileName.split('.').pop()?.toLowerCase() || '';
-  const map: Record<string, string> = {
-    ts: 'typescript', tsx: 'typescript',
-    js: 'javascript', jsx: 'javascript',
-    json: 'json', html: 'html', css: 'css',
-    md: 'markdown', py: 'python', rs: 'rust',
-    go: 'go', java: 'java'
-  };
-  return map[ext] || 'plaintext';
-}
-
-// Available tools
+// Simplified tools - only 3 essential tools
 export const tools: Tool[] = [
   {
-    name: 'read_file',
-    description: 'Read the content of a file from the workspace',
-    parameters: {
-      path: {
-        type: 'string',
-        description: 'Path to the file (e.g., "src/main.ts")',
-        required: true
-      }
-    },
-    execute: async (params, context) => {
-      const file = findFileByPath(context.files, params.path);
-      
-      if (!file || file.type !== 'file') {
-        return {
-          success: false,
-          output: '',
-          error: `File not found: ${params.path}`
-        };
-      }
-      
-      return {
-        success: true,
-        output: file.content || ''
-      };
-    }
-  },
-  
-  {
     name: 'write_file',
-    description: 'Create or update a file in the workspace',
-    parameters: {
-      path: {
-        type: 'string',
-        description: 'Path to the file (e.g., "src/main.ts")',
-        required: true
-      },
-      content: {
-        type: 'string',
-        description: 'Content to write to the file',
-        required: true
-      }
-    },
+    description: 'Create or update a file',
     execute: async (params, context) => {
-      const existingFile = findFileByPath(context.files, params.path);
-      
-      let newFiles: FileNode[];
-      if (existingFile) {
-        newFiles = updateFileInTree(context.files, params.path, params.content);
-      } else {
-        newFiles = createFileInTree(context.files, params.path, params.content);
+      const { path, content } = params;
+      if (!path || content === undefined) {
+        return { success: false, output: 'Missing path or content' };
       }
       
+      const newFiles = createFileInTree(context.files, path, content);
       context.updateFiles(newFiles);
       
-      // Open the file in the editor
-      const createdFile = findFileByPath(newFiles, params.path);
+      // Open the file
+      const createdFile = findFileByPath(newFiles, path);
       if (createdFile) {
         context.openFile(createdFile.id);
       }
       
-      return {
-        success: true,
-        output: existingFile 
-          ? `Updated file: ${params.path}`
-          : `Created file: ${params.path}`
-      };
+      return { success: true, output: `Created/updated: ${path}` };
+    }
+  },
+  
+  {
+    name: 'read_file',
+    description: 'Read a file',
+    execute: async (params, context) => {
+      const { path } = params;
+      if (!path) {
+        return { success: false, output: 'Missing path' };
+      }
+      
+      const file = findFileByPath(context.files, path);
+      if (!file || file.type !== 'file') {
+        return { success: false, output: `File not found: ${path}` };
+      }
+      
+      return { success: true, output: file.content || '' };
     }
   },
   
   {
     name: 'list_files',
-    description: 'List all files and directories in the workspace',
-    parameters: {
-      path: {
-        type: 'string',
-        description: 'Optional path to list (defaults to root)',
-        required: false
-      }
-    },
+    description: 'List all files',
     execute: async (params, context) => {
       const listDir = (nodes: FileNode[], prefix: string = ''): string[] => {
         const result: string[] = [];
@@ -296,152 +203,99 @@ export const tools: Tool[] = [
         return result;
       };
       
-      let targetNodes = context.files;
-      if (params.path) {
-        const dir = findFileByPath(context.files, params.path);
-        if (dir && dir.type === 'folder' && dir.children) {
-          targetNodes = dir.children;
-        } else {
-          return {
-            success: false,
-            output: '',
-            error: `Directory not found: ${params.path}`
-          };
-        }
-      }
-      
-      const fileList = listDir(targetNodes);
-      
-      return {
-        success: true,
-        output: fileList.join('\n') || '(empty directory)'
-      };
-    }
-  },
-  
-  {
-    name: 'search_code',
-    description: 'Search for a pattern in all files',
-    parameters: {
-      pattern: {
-        type: 'string',
-        description: 'Text or regex pattern to search for',
-        required: true
-      }
-    },
-    execute: async (params, context) => {
-      const results: string[] = [];
-      const regex = new RegExp(params.pattern, 'gi');
-      
-      const searchInFiles = (nodes: FileNode[], path: string = '') => {
-        for (const node of nodes) {
-          const fullPath = path ? `${path}/${node.name}` : node.name;
-          if (node.type === 'file' && node.content) {
-            const lines = node.content.split('\n');
-            lines.forEach((line, idx) => {
-              if (regex.test(line)) {
-                results.push(`${fullPath}:${idx + 1}: ${line.trim()}`);
-              }
-            });
-          } else if (node.type === 'folder' && node.children) {
-            searchInFiles(node.children, fullPath);
-          }
-        }
-      };
-      
-      searchInFiles(context.files);
-      
-      if (results.length === 0) {
-        return {
-          success: true,
-          output: `No matches found for: ${params.pattern}`
-        };
-      }
-      
-      return {
-        success: true,
-        output: `Found ${results.length} matches:\n${results.join('\n')}`
-      };
-    }
-  },
-  
-  {
-    name: 'delete_file',
-    description: 'Delete a file from the workspace',
-    parameters: {
-      path: {
-        type: 'string',
-        description: 'Path to the file to delete',
-        required: true
-      }
-    },
-    execute: async (params, context) => {
-      const deleteFromTree = (nodes: FileNode[], path: string): FileNode[] => {
-        const parts = path.split('/').filter(p => p);
-        const fileName = parts[parts.length - 1];
-        const dirPath = parts.slice(0, -1);
-        
-        if (dirPath.length === 0) {
-          return nodes.filter(n => n.name !== fileName);
-        }
-        
-        const deleteInDir = (nodes: FileNode[], depth: number): FileNode[] => {
-          if (depth >= dirPath.length) {
-            return nodes.filter(n => n.name !== fileName);
-          }
-          
-          const dirName = dirPath[depth];
-          return nodes.map(n => 
-            n.name === dirName && n.type === 'folder' && n.children
-              ? { ...n, children: deleteInDir(n.children, depth + 1) }
-              : n
-          );
-        };
-        
-        return deleteInDir(nodes, 0);
-      };
-      
-      const newFiles = deleteFromTree(context.files, params.path);
-      context.updateFiles(newFiles);
-      
-      return {
-        success: true,
-        output: `Deleted: ${params.path}`
-      };
+      const fileList = listDir(context.files);
+      return { success: true, output: fileList.join('\n') || '(empty)' };
     }
   }
 ];
 
-export function getToolDefinitions() {
-  return tools.map(tool => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters
-  }));
+// Parse tool call from model response - very flexible parser
+export function parseToolCall(response: string): { tool: string; params: any } | null {
+  // Try to find tool call in various formats
+  
+  // Format 1: JSON with tool field
+  try {
+    const jsonMatch = response.match(/\{[\s\S]*?"tool"[\s\S]*?\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed.tool) {
+        return { tool: parsed.tool, params: parsed.parameters || parsed.params || {} };
+      }
+    }
+  } catch {}
+  
+  // Format 2: Simple text format "TOOL: write_file PATH: src/main.ts CONTENT: ..."
+  const toolMatch = response.match(/TOOL:\s*(\w+)/i);
+  if (toolMatch) {
+    const tool = toolMatch[1].toLowerCase();
+    const params: any = {};
+    
+    // Extract path
+    const pathMatch = response.match(/PATH:\s*([^\n]+)/i);
+    if (pathMatch) params.path = pathMatch[1].trim();
+    
+    // Extract content (everything after CONTENT: until end or next TOOL:)
+    const contentMatch = response.match(/CONTENT:\s*([\s\S]*?)(?=\n[A-Z]+:|$)/i);
+    if (contentMatch) params.content = contentMatch[1].trim();
+    
+    return { tool, params };
+  }
+  
+  // Format 3: Markdown code block with tool name
+  const codeBlockMatch = response.match(/```(\w+)\n([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    const tool = codeBlockMatch[1].toLowerCase();
+    const content = codeBlockMatch[2];
+    
+    // Try to extract path from the content or preceding text
+    const pathMatch = response.match(/(?:path|file):\s*([^\n]+)/i);
+    const path = pathMatch ? pathMatch[1].trim() : `file.${tool === 'typescript' ? 'ts' : tool === 'javascript' ? 'js' : 'txt'}`;
+    
+    return { tool: 'write_file', params: { path, content } };
+  }
+  
+  return null;
 }
 
 export async function executeTool(
-  toolName: string, 
-  params: any, 
+  toolName: string,
+  params: any,
   context: ToolContext
 ): Promise<ToolResult> {
   const tool = tools.find(t => t.name === toolName);
   
   if (!tool) {
-    return {
-      success: false,
-      output: '',
-      error: `Unknown tool: ${toolName}`
-    };
+    return { success: false, output: `Unknown tool: ${toolName}` };
   }
   
   try {
     return await tool.execute(params, context);
   } catch (error: any) {
-    return {
-      success: false,
-      output: '',
-      error: error.message || 'Tool execution failed'
-    };
+    return { success: false, output: error.message || 'Tool execution failed' };
   }
+}
+
+// Get simplified tool descriptions for small models
+export function getToolPrompt(): string {
+  return `You have 3 tools available:
+
+1. write_file - Create or update a file
+   Parameters: path (string), content (string)
+   Example: write_file({path: "src/main.ts", content: "console.log('hello')"})
+
+2. read_file - Read a file
+   Parameters: path (string)
+   Example: read_file({path: "src/main.ts"})
+
+3. list_files - List all files
+   Parameters: none
+   Example: list_files({})
+
+To use a tool, respond with JSON:
+{"tool": "tool_name", "parameters": {...}}
+
+When done, respond with:
+{"done": true, "summary": "What was accomplished"}
+
+IMPORTANT: Use tools to make actual changes. Don't just describe what to do.`;
 }
