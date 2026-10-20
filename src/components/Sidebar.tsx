@@ -71,27 +71,39 @@ function TreeNode({ node, depth = 0 }: { node: FileNode; depth?: number }) {
 }
 
 export default function Sidebar() {
-  const { files } = useStore();
+  const { files, workspaceName } = useStore();
 
   return (
     <div className="h-full flex flex-col bg-[#252526] border-r border-[#1e1e1e]">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-[#1e1e1e]">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-[#bbbbbb]">
-          Explorer
-        </span>
-        <div className="flex gap-1">
-          <button className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" title="New File">
-            <Plus size={14} />
-          </button>
-          <button className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" title="Refresh">
-            <RefreshCw size={14} />
-          </button>
+      <div className="px-4 py-2 border-b border-[#1e1e1e]">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[#bbbbbb]">
+            Explorer
+          </span>
+          <div className="flex gap-1">
+            <button className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" title="New File">
+              <Plus size={14} />
+            </button>
+            <button className="p-1 hover:bg-[#3c3c3c] rounded text-[#cccccc]" title="Refresh">
+              <RefreshCw size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="text-[10px] text-[#888] truncate" title={workspaceName}>
+          📁 {workspaceName}
         </div>
       </div>
       <div className="flex-1 overflow-y-auto py-1">
-        {files.map(node => (
-          <TreeNode key={node.id} node={node} />
-        ))}
+        {files.length === 0 ? (
+          <div className="px-4 py-8 text-center text-[11px] text-[#666]">
+            <p className="mb-2">Workspace vacío</p>
+            <p className="text-[10px]">Carga un proyecto desde Settings</p>
+          </div>
+        ) : (
+          files.map(node => (
+            <TreeNode key={node.id} node={node} />
+          ))
+        )}
       </div>
     </div>
   );

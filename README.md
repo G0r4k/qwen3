@@ -19,12 +19,14 @@ Usuario → Director (Planifica) → Developer (Ejecuta con herramientas) → Di
 
 - **Arquitectura Director-Developer** con verificación por pasos
 - **Herramientas reales** para el Developer (leer, escribir, buscar, eliminar archivos)
-- **Workspace configurable** - Carga tu proyecto existente
+- **Workspace dinámico** - El explorador muestra en tiempo real todos los cambios
+- **Workspace configurable** - Carga tu proyecto existente desde disco
+- **Apertura automática** - Los archivos creados por el Developer se abren en el editor
 - **Editor de código profesional** con Monaco Editor (el mismo motor que VS Code)
-- **Panel de Plan de Ejecución** en tiempo real
+- **Panel de Plan de Ejecución** en tiempo real con estado de cada paso
 - **Chat con IA** con streaming de respuestas
-- **Explorador de archivos** interactivo
-- **Terminal integrada** con logs detallados
+- **Explorador de archivos** que refleja el workspace actual
+- **Terminal integrada** con logs detallados de cada acción
 - **Configuración flexible** de modelos y parámetros
 - **100% local** - Todos los datos permanecen en tu máquina
 - **Interfaz moderna** inspirada en VS Code
