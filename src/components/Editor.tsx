@@ -49,10 +49,19 @@ export default function CodeEditor() {
         <div className="text-center text-[#666]">
           <div className="text-6xl mb-4">⚡</div>
           <h2 className="text-xl font-light mb-2">LocalCoder</h2>
-          <p className="text-sm">Open a file from the explorer or start chatting with AI</p>
-          <div className="mt-6 text-xs text-[#555] space-y-1">
-            <p>🤖 Dual-model AI: Director + Executor</p>
-            <p>📝 Powered by Qwen2.5-Coder via Ollama</p>
+          <p className="text-sm mb-4">Open a file from the explorer or start chatting with AI</p>
+          <div className="text-xs text-[#555] space-y-2 max-w-md mx-auto">
+            <div className="bg-[#252526] rounded-lg p-3 border border-[#333] text-left">
+              <p className="font-medium text-[#888] mb-2">🎯 Director-Developer Architecture</p>
+              <div className="space-y-1 text-[11px]">
+                <p>🧠 <strong className="text-purple-300">Director</strong> → Plans step-by-step</p>
+                <p>👨‍💻 <strong className="text-blue-300">Developer</strong> → Executes with tools</p>
+                <p>🔍 <strong className="text-green-300">Verification</strong> → Each step validated</p>
+              </div>
+            </div>
+            <p className="text-[10px] text-[#444] mt-3">
+              Powered by Qwen2.5-Coder via Ollama • 100% Local
+            </p>
           </div>
         </div>
       </div>

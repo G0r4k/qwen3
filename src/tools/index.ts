@@ -16,6 +16,7 @@ export interface ToolContext {
   files: FileNode[];
   workspaceName: string;
   updateFiles: (files: FileNode[]) => void;
+  openFile: (fileId: string) => void;
   addTerminalLine: (line: { content: string; type: 'info' | 'error' | 'output' }) => void;
 }
 
@@ -198,6 +199,12 @@ export const tools: Tool[] = [
       }
       
       context.updateFiles(newFiles);
+      
+      // Open the file in the editor
+      const createdFile = findFileByPath(newFiles, params.path);
+      if (createdFile) {
+        context.openFile(createdFile.id);
+      }
       
       return {
         success: true,

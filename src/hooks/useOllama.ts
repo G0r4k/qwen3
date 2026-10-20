@@ -203,6 +203,7 @@ ${step.description}`;
               files: useStore.getState().files,
               workspaceName: useStore.getState().workspaceName,
               updateFiles: (newFiles) => setWorkspaceFiles(newFiles),
+              openFile: (fileId) => useStore.getState().openFile(fileId),
               addTerminalLine: (line) => {
                 addTerminalLine({
                   id: uuidv4(),
