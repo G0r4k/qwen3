@@ -15,6 +15,19 @@ LocalCoder implementa un flujo de trabajo profesional:
 Usuario → Director (Planifica) → Developer (Ejecuta con herramientas) → Director (Verifica) → ✓
 ```
 
+### 🚀 Optimizado para Modelos Pequeños (3B)
+
+El sistema está especialmente optimizado para funcionar con modelos pequeños como qwen2.5-coder:3b:
+
+- ✅ **Prompts simplificados** - 90% más cortos y claros
+- ✅ **Solo 3 herramientas esenciales** - write_file, read_file, list_files
+- ✅ **Parser flexible** - Funciona con respuestas imperfectas
+- ✅ **Ejemplos concretos** - El modelo ve exactamente qué hacer
+- ✅ **Fallbacks inteligentes** - Nunca se rompe, siempre produce resultados
+- ✅ **Contexto mínimo** - Solo lista de archivos, no contenido completo
+
+Ver [OPTIMIZATIONS.md](./OPTIMIZATIONS.md) para más detalles.
+
 ## 🚀 Características
 
 - **Arquitectura Director-Developer** con verificación por pasos
